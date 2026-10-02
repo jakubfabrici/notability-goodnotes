@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install gnnote with test extras
+        run: python -m pip install -e ".[test]"
+
+      - name: Cache reference sample repositories
+        uses: actions/cache@v4
+        with:
+          path: tests/.samples
+          key: samples-${{ hashFiles('tests/conftest.py') }}
+
+      - name: Clone reference repositories (test oracles and sample files)
+        run: |
+          python - <<'EOF'
+          import subprocess, sys
+          from pathlib import Path
+          sys.path.insert(0, ".")
+          from tests.conftest import REPOS
+          root = Path("tests/.samples")
+          root.mkdir(parents=True, exist_ok=True)
+          for name, url in REPOS.items():
+              target = root / name
+              if target.is_dir():
+                  print("present:", name)
+                  continue
+              try:
+                  subprocess.run(["git", "clone", "-q", "--depth", "1", url, str(target)],
+                                 check=True, timeout=300)
+                  print("cloned:", name)
+              except Exception as exc:  # noqa: BLE001
+                  print("skipped:", name, exc)
+          EOF
+
+      - name: Install oracle parser dependencies (parser-for-goodnotes needs numpy)
+        run: python -m pip install numpy
+
+      - name: Run tests
+        env:
+          GNNOTE_SAMPLES: ${{ github.workspace }}/tests/.samples
+        run: python -m pytest -q
+
+  e2e:
+    name: browser end-to-end (Pyodide)
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Playwright with Chromium
+        run: |
+          if [ -f tests/e2e/package.json ]; then
+            (cd tests/e2e && npm install --no-audit --no-fund)
+          else
+            npm install --no-save --no-package-lock --no-audit --no-fund playwright
+          fi
+          npx playwright install --with-deps chromium
+
+      - name: Clone sample repositories
+        run: |
+          mkdir -p tests/.samples
+          git clone -q --depth 1 https://github.com/franzthiemann/goodparse tests/.samples/goodparse
+          git clone -q --depth 1 https://github.com/HuyNguyenAu/notability-to-svg tests/.samples/notability-to-svg
+
+      - name: Build dist (CDN Pyodide)
+        run: python scripts/build_web.py --out dist
+
+      - name: GoodNotes -> Notability in the browser
+        run: |
+          INPUT=$(ls tests/.samples/goodparse/samples/*.goodnotes | head -n 1)
+          echo "input: $INPUT"
+          node tests/e2e/run.js --dist dist --input "$INPUT" --expect-ext .note
+
+      - name: Notability -> GoodNotes in the browser
+        run: node tests/e2e/run.js --dist dist --input tests/.samples/notability-to-svg/example.note --expect-ext .goodnotes
