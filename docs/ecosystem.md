@@ -8,7 +8,7 @@ was checked against code, bytes or a primary document fetched today;
 experiment; **[unknown]** is open.
 
 Working copies used below live under
-`/tmp/claude-0/-home-user-notability-goodnotes/1c66371c-eef7-5838-85e1-bceb6a2e1edc/scratchpad/`
+the research scratch directory (not part of the repository)
 (`ref/`, `pyo/`); the GoodNotes samples are `ref/goodparse/samples/*.goodnotes`
 and `ref/parser-for-goodnotes/assets/*.goodnotes`.
 
