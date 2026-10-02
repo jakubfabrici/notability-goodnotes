@@ -31,11 +31,14 @@ class Point:
 class Stroke:
     points: List[Point]
     color: RGBA = (0.0, 0.0, 0.0, 1.0)
-    kind: str = "pen"  # "pen" | "highlighter"
+    kind: str = "pen"  # "pen" | "highlighter" | "fill" (a filled closed shape; see ``outline``)
     pen: Optional[str] = None  # best-effort tool name: ballpoint / fountain / brush / pencil
     width: float = 1.0  # nominal pen width in pt (before pressure)
     controls: Optional[List[Tuple[Point, Point]]] = None  # cubic Bezier handles, len == len(points) - 1
     outline: Optional[List[List[Point]]] = None  # closed polygons (pt) for strokes GoodNotes stores as filled shapes
+    # ``kind == "fill"``: ``outline`` holds the filled region (GoodNotes' translucent shape fill),
+    # ``color`` its fill colour (alpha included) and ``points`` the first polygon's vertices so
+    # bbox()/page assignment keep working; such strokes have no centre line to draw.
 
     @property
     def is_bezier(self) -> bool:
@@ -54,7 +57,7 @@ class Image:
     w: float
     h: float
     data: bytes
-    fmt: str = "png"  # "png" | "jpeg"
+    fmt: str = "png"  # "png" | "jpeg" | "pdf" (a vector sticker: page 1 of ``data`` fills the box)
     rotation: float = 0.0  # degrees, clockwise, about the box centre
 
 
@@ -79,6 +82,8 @@ class TextBox:
     runs: List[TextRun] = field(default_factory=list)
     color: RGBA = (0.0, 0.0, 0.0, 1.0)
     size: float = 12.0
+    rotation: float = 0.0  # degrees, clockwise, about the box's top-left corner
+    align: str = "left"  # "left" | "center" | "right"
 
 
 @dataclass

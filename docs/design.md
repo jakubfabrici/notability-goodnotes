@@ -110,7 +110,7 @@ def fixed32_float(field) -> float
 # applelz4.py
 def is_apple_lz4(data: bytes) -> bool
 def decompress(data: bytes) -> bytes                     # bv41 (standard LZ4 block), bv4- (one u32 size + raw), bv4$ ; multi-block
-def compress(data: bytes, level: int = 0) -> bytes       # level 0 = all-literal bv41 blocks of <= 64 KiB; level 1 = greedy LZ4 (optional)
+def compress(data: bytes, level: int = 0) -> bytes       # level 0 = all-literal bv41 blocks of <= 32 KiB (GoodNotes 2026 framing); level 1 = greedy LZ4 (optional)
 # tpl.py
 @dataclass class FlatStroke: width: float; start: (x, y); quads: List[(cx, cy, ex, ey)]           # 'vuA(v)A(S(uu))A(S(uuuu))vA(f)'
 @dataclass class RibbonStroke: points: List[(x, y, r)]; ...                                      # 'vA(v)A(u)A(u)...' legacy per-point radius

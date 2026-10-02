@@ -20,7 +20,7 @@ LZ4 block format (``lz4_Block_format.md``)::
     match length = nibble (+ extension) + 4; offset 1..65535 (0 is invalid)
     the last sequence holds only literals (no offset), and may be the only sequence
 
-``compress(level=0)`` emits one all-literal sequence per 64 KiB chunk (``token 0xF0`` +
+``compress(level=0)`` emits one all-literal sequence per 32 KiB chunk (``token 0xF0`` +
 extension bytes + the chunk, or ``n << 4`` + chunk for n < 15), which is what the writer uses:
 it is standard LZ4, decodable by every known reader, and the ZIP deflate layer removes the
 redundancy.  ``compress(level=1)`` is a small greedy hash-chain-free LZ4 compressor honouring
@@ -35,7 +35,7 @@ from typing import List
 MAGIC_COMPRESSED = b"bv41"
 MAGIC_STORED = b"bv4-"
 MAGIC_END = b"bv4$"
-BLOCK_SIZE = 65536
+BLOCK_SIZE = 32768  # GoodNotes (2026 builds) frames its own blobs in 32 KiB blocks; mirror that
 
 _MIN_MATCH = 4
 _MF_LIMIT = 12       # a match may not start closer than this to the end of the block
@@ -208,7 +208,7 @@ def decompress(data: bytes) -> bytes:
 
 
 def compress(data: bytes, level: int = 0) -> bytes:
-    """Encode ``data`` as ``bv41`` blocks of at most 64 KiB plus ``bv4$``.
+    """Encode ``data`` as ``bv41`` blocks of at most BLOCK_SIZE (32 KiB) bytes plus ``bv4$``.
 
     Empty input encodes as just ``bv4$``.  Matches never cross block boundaries, so each block
     is independently decodable as well.

@@ -58,15 +58,15 @@ def test_empty_payload_is_just_terminator():
     assert not applelz4.is_apple_lz4(b"")
 
 
-@pytest.mark.parametrize("n", [0, 1, 14, 15, 16, 269, 270, 271, 1000, 65535, 65536, 65537, 200000])
+@pytest.mark.parametrize("n", [0, 1, 14, 15, 16, 269, 270, 271, 1000, 32767, 32768, 32769, 65536, 200000])
 def test_level0_round_trip_sizes(n):
     rng = random.Random(n)
     payload = bytes(rng.getrandbits(8) for _ in range(n))
     frame = applelz4.compress(payload)
     blocks = applelz4.split_blocks(frame)
     assert blocks[-1][0] == b"bv4$"
-    assert len(blocks) - 1 == -(-n // 65536)
-    assert all(b[1] <= 65536 for b in blocks[:-1])
+    assert len(blocks) - 1 == -(-n // applelz4.BLOCK_SIZE)
+    assert all(b[1] <= applelz4.BLOCK_SIZE for b in blocks[:-1])
     assert applelz4.decompress(frame) == payload
 
 
