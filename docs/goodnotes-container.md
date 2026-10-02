@@ -611,3 +611,14 @@ Checked 2026-10-02 (`scratchpad/critic/clocks.py`, `events105.py`; inkterop's
    Mac 6 (inkterop), so a fixed embedded JPEG suffices on that platform.
 8. The two reference parsers were re-run on nothing new here; items 1–7 come from the sample
    bytes and from inkterop's documented Mac-app iterations (MIT, 2026-07-09/10).
+
+## Addendum (schema 25/35)
+
+The four 2026-09/10 samples written by the latest GoodNotes (Test6–Test9, `schema.pb` 25 and
+35) are analysed in `goodnotes-v35-binding.md`, which supersedes this document where they
+disagree (its §11 lists the corrections): `N = P + 1` is a 128-bit integer increment *with
+carry*, event `#3` re-binds a page to another template (last wins), `index.attachments.pb`
+`#2` may name a different storage member than `#1` (`#6.#1` id vs `#6.#2` storage id),
+`index.notes.pb` order is arbitrary (sort by the `#54.#4` keys, alphabet incl. `!`), `#7`/`#18`
+on a `#2` event do not mean "ruled paper" (only `#18.#3` does), sequence numbers have gaps, and
+`document.info.pb` may reappear as a 0-byte member. The writer recipe of §14 is unchanged.

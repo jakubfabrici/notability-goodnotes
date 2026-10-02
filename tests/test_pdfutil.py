@@ -201,22 +201,64 @@ def iter_all_sample_pdfs(samples) -> List[Tuple[str, bytes]]:
 # real sample files
 # ---------------------------------------------------------------------------------
 
-GOODNOTES_TEMPLATE_SIZES = {(455.04, 588.45), (595.28, 841.89)}  # "standard" and A4
+STD = (455.04, 588.45)  # GoodNotes "standard" paper
+A4 = (595.28, 841.89)
+SVG2PDF = "svg2pdf"  # the producer of every GoodNotes catalogue paper
+QUARTZ_26 = "iOS Version 26.6.1 (Build 23G83) Quartz PDFContext"
+
+# file -> {attachment UUID prefix: (width, height, producer)} for every PDF attachment of the
+# pinned sample files, verified with PyMuPDF.  Test9 carries, besides three A4 catalogue papers,
+# a 1280 x 905 Figma export (empty producer), an Excel form, an iOS 26 photo strip and the
+# 254 x 214 die-cut sticker (docs/goodnotes-v35-binding.md section 5).
+GOODNOTES_PDF_EXPECTED: Dict[str, Dict[str, Tuple[float, float, str]]] = {
+    "Test4.goodnotes": {"B9F5E2EA": (*STD, SVG2PDF), "E6060F38": (*STD, SVG2PDF)},
+    "Test5.goodnotes": {"B9F5E2EA": (*STD, SVG2PDF), "E6060F38": (*STD, SVG2PDF)},
+    "Test6.goodnotes": {"8AF953CC": (*STD, SVG2PDF), "CF226D59": (*STD, SVG2PDF), "A5C81AC6": (*STD, SVG2PDF)},
+    "Test7.goodnotes": {"1C0FEE51": (*STD, SVG2PDF), "D35A652A": (*STD, SVG2PDF), "A79EA933": (*STD, SVG2PDF)},
+    "Test8.goodnotes": {"46EB3A2A": (*STD, SVG2PDF)},
+    "Test9.goodnotes": {
+        "B0212B82": (*A4, SVG2PDF), "03D3A8D4": (*A4, SVG2PDF), "6F089296": (*A4, SVG2PDF),
+        "4043E92A": (454.91, 143.28, QUARTZ_26),
+        "4452790C": (595.2, 841.68, "Microsoft\u00ae Excel\u00ae f\u00fcr Microsoft 365"),
+        "786977EC": (254.0, 214.0, "iOS Version 14.1 (Build 18A8395) Quartz PDFContext"),
+        "F5503752": (1280.0, 905.0, ""),
+    },
+    "test.goodnotes": {"70AB4692": (*A4, SVG2PDF), "8B9E0B3B": (*A4, SVG2PDF)},
+    "test2.goodnotes": {"7819A512": (*A4, SVG2PDF)},
+    "test3.goodnotes": {"7819A512": (*A4, SVG2PDF)},
+    "ex1.goodnotes": {"708BD533": (*STD, SVG2PDF)},
+    "ex2.goodnotes": {"F8C077F2": (*STD, SVG2PDF)},
+    "ex3.goodnotes": {"0C4DBDEB": (*STD, SVG2PDF)},
+    "record.goodnotes": {"C64FEDF5": (*STD, SVG2PDF)},
+}
 
 
-def test_goodnotes_template_pdfs(samples):
-    seen = 0
-    for name, data in iter_goodnotes_pdfs(samples):
-        info = pdf_info(data)
-        assert len(info.pages) == 1, name
-        page = info.pages[0]
-        assert (round(page.width, 2), round(page.height, 2)) in GOODNOTES_TEMPLATE_SIZES, name
-        assert page.rotation == 0
-        assert info.producer == "svg2pdf", name
-        assert info.creator == ""
-        assert info.warnings == [], name
-        seen += 1
-    assert seen >= 1
+def test_goodnotes_sample_pdfs(samples):
+    """Every PDF attachment of every .goodnotes sample parses cleanly; the pinned files also
+    match the table above attachment by attachment."""
+    for path in samples.goodnotes_files():
+        expected = samples.expected_for(path, GOODNOTES_PDF_EXPECTED)
+        seen: Dict[str, Tuple[float, float, str]] = {}
+        with zipfile.ZipFile(path) as z:
+            for member in z.namelist():
+                if "attachments/" not in member or member.endswith("/"):
+                    continue
+                data = z.read(member)
+                if not data.startswith(b"%PDF"):
+                    continue
+                name = f"{path.name}:{member.rsplit('/', 1)[-1]}"
+                info = pdf_info(data)
+                assert info.pages, name
+                assert all(p.width > 0 and p.height > 0 for p in info.pages), name
+                assert all(p.rotation == 0 for p in info.pages), name
+                assert info.warnings == [], name
+                assert info.page_count == len(info.pages), name
+                if info.producer == SVG2PDF:  # a catalogue paper is always one page
+                    assert len(info.pages) == 1 and info.creator == "", name
+                seen[member.rsplit("/", 1)[-1][:8]] = (round(info.pages[0].width, 2), round(info.pages[0].height, 2), info.producer)
+        assert seen, path.name
+        if expected is not None:
+            assert seen == expected, path.name
 
 
 # values verified with PyMuPDF (LibreOffice writes A4 as 595.3 x 841.89)
@@ -290,12 +332,16 @@ def test_every_sample_pdf_matches_pymupdf(samples):
 
 def test_damaged_sample_pdfs_fall_back_to_scanning(samples):
     """Break the cross-reference data of every sample in three ways; the scan fallback must
-    still report the same pages (and producer) as the healthy file."""
+    still report the same pages as the healthy file, and the same producer where the
+    healthy file has one.  (A file whose newest Info dictionary names no producer may
+    still contain a superseded one that only a scan finds: Test9's Figma export answers
+    ``Figma`` without its startxref and ``""`` with it, as PyMuPDF does.)"""
     variants = {
         "no startxref": lambda d: d.replace(b"startxref", b"startxxxx"),
         "offsets shifted": lambda d: d[:9] + b"%junk junk junk\n" + d[9:],
         "tail truncated": lambda d: d[: d.rfind(b"startxref")],
     }
+    checked = 0
     for name, data in iter_all_sample_pdfs(samples):
         if len(data) > 3_000_000:
             continue  # keep the test quick
@@ -303,9 +349,12 @@ def test_damaged_sample_pdfs_fall_back_to_scanning(samples):
         for label, mutate in variants.items():
             info = pdf_info(mutate(data))
             assert _sizes(info) == _sizes(healthy), f"{name} ({label})"
-            assert info.producer == healthy.producer, f"{name} ({label})"
+            if healthy.producer:
+                assert info.producer == healthy.producer, f"{name} ({label})"
             if label != "tail truncated":  # a linearized file keeps a valid first-page startxref
                 assert info.warnings, f"{name} ({label}) should record a warning"
+        checked += 1
+    assert checked >= 1
 
 
 # ---------------------------------------------------------------------------------

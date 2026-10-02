@@ -156,7 +156,36 @@ def make_rtf(text: str, runs: List[TextRun], font: str = "HelveticaNeue", size_h
   attachment; `fmt` sniffed. Crop/rotation: use `#3` only when it differs from `#2` and warn.
 * Text boxes (`#8`): outer rect `#2` inset by `#10`; RTF `#6` → `TextBox` with runs; sizes
   (`\fsN/2`) are canvas units → pt.
-* Unknown record kinds (`#20/#21/#22` …) → warning with the field number, never an exception.
+* Unknown record kinds (`#20/#22` …) → warning with the field number, never an exception.
+
+Rules added for the schema-25/35 files (`goodnotes-v35-binding.md`, `goodnotes-v35-elements.md`,
+`goodnotes-v35-strokes.md`); where they differ from the bullets above, these win:
+
+* Page binding: `P = N − 1` as a **128-bit integer with carry** (`...E450 → ...E44F`), events
+  keyed by the exact page UUID; a 31-hex-digit prefix match is only the fallback for hand-made
+  files. Event `#3` re-binds a page to another template exactly like `#54.#3.#1` (later events
+  win, order key untouched). Attachment ids resolve through `index.attachments.pb`, then the
+  `#6.#1 → #6.#2` storage alias, then `attachments/<id>`. Order keys are sorted bytewise; a page
+  that has a key never falls back to index order. `Page.paper` is "lined/grid/dotted" only when
+  the catalogue PDF draws it (or `#2.#18.#3` is present); `#7`/`#18.#2` alone mean blank paper.
+* Shape fills (content kind `#9`, Test6–8): `Stroke(kind="fill", outline=[closed polygon],
+  points=the polygon, color=#7 RGBA (alpha 0.1), width=0, pen=None)` inserted right after the
+  last stroke of its outline element (`#5`); dropped when erased (`#14 = 1` / NaN bbox) or when
+  the outline is not on the page (warning).
+* Auto-shape `#9.#2 {P0, C, P1}` is one quadratic Bezier → a 2-anchor stroke with the elevated
+  cubic handles; `#9.#1` lists are drawn as given (first == last = closed polygon, two identical
+  points = a dot). Ribbon strokes whose flags contain 4/5 are `pen = "marker"` even without `#20`.
+* Schema-35 text (content kind `#21`): runs from the Apple-LZ4 blob `#32.#1.#2`; `TextBox` at
+  `(#20.#1 + inset) × k`, size `(box − 2 inset) × k × #20.#3`, font size `(run #40 or default
+  #32.#5.#1.#40) × k × #20.#3`, colour from the run (default black), `rotation =
+  degrees(#20.#2)` (clockwise, about the frame origin), `align = "center"` when `#3.#4 = 2`.
+  Font family from the run or the default style; `#60 = −30` is read as bold (low confidence).
+* Images: a `%PDF` attachment is a vector sticker → `Image(fmt="pdf")` sized by `#2` (1 PDF pt
+  = 1 canvas unit). JPEGs get their EXIF orientation parsed (APP1, tag 0x0112): `#2` is the
+  displayed box, `Image.rotation` = 90 / 180 / 270 says how the raw pixels must be turned to fill
+  it (mirrored variants warn and keep the rotation). Never guess from aspect ratios.
+* No warning for anything listed here; the only warning the schema-25/35 samples produce is the
+  pencil approximation.
 
 ### 4.2 Model → Notability (`notability/writer.py`)
 
@@ -184,6 +213,19 @@ def make_rtf(text: str, runs: List[TextRun], font: str = "HelveticaNeue", size_h
 * Images → `ImageMediaObject` (+ `Images/Image N.jpg|png`), text boxes → `TextBlockMediaObject`
   (Part 12 items 3–4); both are written only when present, with the class registrations the
   template needs. Highlighter behind text flag kept as in the template.
+* Content the latest GoodNotes files add (`goodnotes-v35-elements.md`), decided 2026-10:
+  * `Stroke.kind == "fill"` is dropped — Notability has no filled shapes — with **one** warning
+    `"N shape fills dropped (Notability has no filled shapes)"` counting the whole document.
+  * `Image.fmt == "pdf"` (vector stickers; also any image whose bytes start with `%PDF-`) is
+    dropped with one warning `"N PDF images dropped (Notability images must be PNG or JPEG)"`.
+  * `Image.rotation` and `TextBox.rotation` (degrees, clockwise) → `rotationDegrees` in
+    **radians**. Notability rotates about the object's centre; the model's text box rotates
+    about its top-left corner, so the writer moves `documentOrigin` to where a centre-pivot
+    rotation puts that corner back (`text_origin_for_centre_pivot`). An EXIF-rotated JPEG
+    (orientation ≠ 1) is written byte for byte with `rotationDegrees` from the model; whether
+    Notability applies the EXIF orientation on top is unverified → one warning.
+  * `TextBox.align` → the text store's `formattedStringTextAlignmentKey` (0 left, 1 centre,
+    2 right); the note's own flow-text key stays 0.
 * `metadata.plist` (new UUID, dates = now, name, subject "GoodNotes import" unless given),
   `Recordings/library.plist`, empty `Assets/ Images/ PDFs/ HandwritingIndex/` entries, white
   thumbnails 48×63 / 96×126 / 144×189 / 288×378 (RGB PNG via zlib). Member path prefix = note
@@ -241,6 +283,30 @@ event synthesis, inkref's confirmed stroke encoding):
   `#3`/`#14` tombstone flags.
 * Images: `goodnotes-elements.md` §2.5 (attachment + `#6` event + record pair). Text boxes:
   §4.4 (RTF via `rtf.make_rtf`, outer rect = text rect + 10 padding).
+* Content the latest GoodNotes files add (`goodnotes-v35-elements.md`, decided 2026-10):
+  * `Stroke.kind == "fill"` → a top-level `#9` fill record (§1.2 layout: `#1 E, #2 bbox,
+    #3 {#1 {#1 1, #2 nonce}}, #4 {#1 closed polygon}, #5 parent UUID, #6 "", #7 RGBA with the
+    model's alpha, #15 {#2 nonce} = metadata clock, #18 24`; metadata without `#4`) written
+    right after its parent, **only when the ink stroke just before it in `Page.strokes` — or,
+    failing that, the one just after it (GoodNotes stores both orders) — is its parent** (a
+    non-fill stroke whose bounding box matches the fill's outline within 2 pt + 2 %). Any
+    other fill is skipped with one counted warning. Polygon = the first `outline`
+    ring in canvas units, first point repeated last; GoodNotes itself only writes fills for
+    `#7.#9` auto-shapes, so acceptance of a fill under a plain ink stroke is unverified. Fills
+    take no draw index.
+  * `Image.fmt == "pdf"` → the PDF bytes become an ordinary image attachment (`#6` event with
+    `#12 = ""`, like a raster) and the record gets `#6 = 3`; JPEGs get `#6 = 1`, PNGs no `#6`
+    (§5.1).
+  * `Image.rotation`: GoodNotes has no verified rotation field (`#3.#3` is never written). A
+    JPEG whose EXIF orientation prescribes the same quarter-turn (6 → 90, 3 → 180, 8 → 270) is
+    written unchanged with `#2`/`#3` = the **displayed** box (w/h swapped about the centre for
+    90/270), exactly as GoodNotes stores EXIF photos (§5.3); one counted warning. Every other
+    rotation is dropped with a counted warning.
+  * `TextBox.align` "center"/"right" → `\qc`/`\qr` in the RTF paragraph header;
+    `TextBox.rotation` is dropped with a counted warning.
+  * Container: schema stays 24 everywhere (`goodnotes-v35-binding.md` §12); `document.info.pb`
+    is **not** written (0 bytes in the one schema-35 sample, absent from the schema-25 ones —
+    the schema-24 generation we imitate has none). Nothing else changed.
 * `options.ribbon` (experimental, off by default): per-point widths via the ribbon TPL with
   synthesised CGPath pools (`goodnotes-stroke.md` §2.2); only enabled if the pools regenerated
   for the hand-decoded sample stroke match GoodNotes' own bytes (test), otherwise the option

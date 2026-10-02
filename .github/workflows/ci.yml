@@ -34,27 +34,29 @@ jobs:
           path: tests/.samples
           key: samples-${{ hashFiles('tests/conftest.py') }}
 
-      # The reference repositories are third-party test oracles and sample files.  A clone
-      # that fails (network, repository gone) only makes the tests that need it skip.
-      - name: Clone reference repositories (test oracles and sample files)
+      # The reference repositories are third-party test oracles and sample files, each
+      # checked out at the commit pinned in tests/conftest.py so the corpus is the same on
+      # every run (the cache key above changes with the pins).  A clone that fails (network,
+      # repository gone) only makes the tests that need it skip.
+      - name: Clone reference repositories at their pinned commits (test oracles and sample files)
         run: |
           python - <<'EOF'
-          import subprocess, sys
+          import shutil, sys
           from pathlib import Path
           sys.path.insert(0, ".")
-          from tests.conftest import REPOS
+          from tests.conftest import REPOS, clone_pinned
           root = Path("tests/.samples")
           root.mkdir(parents=True, exist_ok=True)
-          for name, url in REPOS.items():
+          for name, (url, sha) in REPOS.items():
               target = root / name
               if target.is_dir():
                   print("present:", name)
                   continue
               try:
-                  subprocess.run(["git", "clone", "-q", "--depth", "1", url, str(target)],
-                                 check=True, timeout=300)
-                  print("cloned:", name)
+                  clone_pinned(target, url, sha)
+                  print("cloned:", name, "@", sha[:7])
               except Exception as exc:  # noqa: BLE001
+                  shutil.rmtree(target, ignore_errors=True)
                   print("skipped:", name, exc)
           EOF
 

@@ -17,7 +17,10 @@ from gnnote.model import Document, Image, Page, PdfBackground, Point, Stroke, Te
 from gnnote.notability.archivebuilder import (
     INT64_MAX, ArchiveBuilder, color_string, nsrgb_bytes, point_string, range_string, rect_string,
 )
-from gnnote.notability.writer import LEGACY_ASPECT, image_pixel_size, white_png, write_note
+from gnnote.notability.writer import (
+    LEGACY_ASPECT, TEXT_PAD_X, TEXT_PAD_Y, exif_rotation, image_pixel_size, jpeg_exif_orientation,
+    text_origin_for_centre_pivot, white_png, write_note,
+)
 
 W = 574.0
 PLAIN_H = LEGACY_ASPECT * W
@@ -63,6 +66,21 @@ def minimal_pdf(width: float, height: float) -> bytes:
         out.write(f"{off:010d} 00000 n \n".encode())
     out.write(f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
     return out.getvalue()
+
+
+def exif_jpeg(orientation: int, width: int, height: int, big_endian: bool = False) -> bytes:
+    """A minimal JPEG skeleton: SOI, APP1 Exif (orientation tag only), SOF0 (size), EOI."""
+    o = ">" if big_endian else "<"
+    tiff = ((b"MM\x00*" if big_endian else b"II*\x00") + struct.pack(o + "I", 8) + struct.pack(o + "H", 1)
+            + struct.pack(o + "HHIHH", 0x0112, 3, 1, orientation, 0) + struct.pack(o + "I", 0))
+    app1 = b"Exif\x00\x00" + tiff
+    sof0 = struct.pack(">BHHB", 8, height, width, 3) + b"\x01\x22\x00\x02\x11\x01\x03\x11\x01"
+    return (b"\xff\xd8" + b"\xff\xe1" + struct.pack(">H", len(app1) + 2) + app1
+            + b"\xff\xc0" + struct.pack(">H", len(sof0) + 2) + sof0 + b"\xff\xd9")
+
+
+def parse_point(text: str):
+    return tuple(float(v) for v in text.strip("{}").split(","))
 
 
 def paper_pdf(width: float, height: float) -> bytes:
@@ -522,3 +540,104 @@ def test_image_pixel_size_jpeg_and_png():
             b"\xff\xc0\x00\x11\x08\x00\x20\x00\x30\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xff\xd9")
     assert image_pixel_size(jpeg) == (48, 32)
     assert image_pixel_size(b"garbage") is None
+
+
+# ---------------------------------------------------------------------------------------
+# model content the latest GoodNotes files add (fills, PDF stickers, rotation, alignment)
+
+def test_shape_fills_dropped_with_one_warning():
+    ring = [Point(100 + 30 * math.cos(t / 8.0), 100 + 20 * math.sin(t / 8.0)) for t in range(51)]
+    fill = Stroke(list(ring), color=(0.2, 0.6, 0.2, 0.1), kind="fill", width=0.0, outline=[ring])
+    doc = Document(pages=[Page(GN_W, GN_H, strokes=[line(0, 0, 50, 50), fill, fill, line(0, 50, 50, 0)]),
+                          Page(GN_W, GN_H, strokes=[fill])])
+    pl, a = load_session(write_note(doc, Opts()))
+    curves = parse_curves(a, hash_of(a, a.root))
+    assert len(curves) == 2
+    assert all(c["style"] == 3 for c in curves)
+    assert doc.warnings == ["3 shape fills dropped (Notability has no filled shapes)"]
+
+
+def test_pdf_images_dropped_with_one_warning():
+    sticker = paper_pdf(254, 214)
+    doc = Document(pages=[Page(GN_W, GN_H, images=[Image(10, 10, 100, 80, sticker, "pdf"),
+                                                   Image(10, 100, 100, 80, white_png(4, 4), "png"),
+                                                   Image(10, 200, 100, 80, sticker, "png")])])  # sniffed as PDF
+    data = write_note(doc, Opts())
+    pl, a = load_session(data)
+    media = a.array(a.get(a.get(a.root, "richText"), "mediaObjects"))
+    assert [a.classname(m) for m in media] == ["ImageMediaObject"]
+    assert [m for m in members(data) if m.startswith("Images/Image")] == ["Images/Image .png"]
+    assert doc.warnings == ["2 PDF images dropped (Notability images must be PNG or JPEG)"]
+
+
+def test_text_box_rotation_and_alignment():
+    boxes = [TextBox(60, 90, 200, 30, "centred", align="center", rotation=30.0),
+             TextBox(60, 140, 200, 30, "right", align="right"),
+             TextBox(60, 190, 200, 30, "left")]
+    doc = Document(pages=[Page(W, W * LEGACY_ASPECT, texts=boxes)])  # scale 1
+    pl, a = load_session(write_note(doc, Opts()))
+    rich = a.get(a.root, "richText")
+    assert rich["formattedStringTextAlignmentKey"] == 0  # the note's own flow text stays left
+    media = a.array(a.get(rich, "mediaObjects"))
+    stores = [a.get(m, "textStore") for m in media]
+    assert [st["formattedStringTextAlignmentKey"] for st in stores] == [1, 2, 0]
+    assert [m["rotationDegrees"] for m in media] == pytest.approx([math.radians(30.0), 0.0, 0.0])
+    # unrotated boxes: origin = text frame minus the padding
+    assert parse_point(a.string(media[1]["documentOrigin"])) == pytest.approx((60 - TEXT_PAD_X, 140 - TEXT_PAD_Y))
+    # the rotated box turns about its centre in Notability, about its top-left corner in the
+    # model: rotating the written box about its centre must bring the frame corner back to (60, 90)
+    origin = parse_point(a.string(media[0]["documentOrigin"]))
+    size = parse_point(a.string(media[0]["unscaledContentSize"]))
+    assert size == pytest.approx((200 + 2 * TEXT_PAD_X, 30 + 2 * TEXT_PAD_Y))
+    assert a.string(media[0]["documentContentOrigin"]) == a.string(media[0]["documentOrigin"])
+    theta = math.radians(30.0)
+    cx, cy = origin[0] + size[0] / 2, origin[1] + size[1] / 2
+    lx, ly = TEXT_PAD_X - size[0] / 2, TEXT_PAD_Y - size[1] / 2  # frame corner, centre-relative
+    corner = (cx + lx * math.cos(theta) - ly * math.sin(theta), cy + lx * math.sin(theta) + ly * math.cos(theta))
+    assert corner == pytest.approx((60.0, 90.0), abs=1e-6)
+    assert origin != pytest.approx((60 - TEXT_PAD_X, 90 - TEXT_PAD_Y))
+    assert doc.warnings == []
+    # the helper is the identity for theta = 0 and for a pivot at the centre
+    assert text_origin_for_centre_pivot((10, 20), (100, 50), (0, 0), 0.0) == pytest.approx((10, 20))
+    assert text_origin_for_centre_pivot((10, 20), (100, 50), (50, 25), 1.0) == pytest.approx((10, 20))
+
+
+def test_image_rotation_in_radians_and_exif_warning():
+    photo = exif_jpeg(6, 96, 64)
+    doc = Document(pages=[Page(W, W * LEGACY_ASPECT, images=[
+        Image(100, 50, 96, 64, photo, "jpeg", rotation=90.0),
+        Image(100, 200, 40, 30, white_png(4, 3), "png", rotation=-15.0),
+        Image(100, 300, 96, 64, exif_jpeg(1, 96, 64), "jpeg", rotation=90.0),
+    ])])
+    data = write_note(doc, Opts())
+    pl, a = load_session(data)
+    media = a.array(a.get(a.get(a.root, "richText"), "mediaObjects"))
+    assert [m["rotationDegrees"] for m in media] == pytest.approx([math.pi / 2, math.radians(-15.0), math.pi / 2])
+    # the native box is kept (Notability rotates about the centre itself); bytes untouched
+    assert parse_point(a.string(media[0]["documentOrigin"])) == pytest.approx((100, 50))
+    assert parse_point(a.string(media[0]["unscaledContentSize"])) == pytest.approx((96, 64))
+    assert a.string(a.get(media[0], "figure")["FigureCropRectKey"]) == "{{0, 0}, {96, 64}}"
+    assert members(data)["Images/Image .jpg"] == photo
+    assert doc.warnings == ["1 rotated photos carry an EXIF orientation; Notability may apply it on top of "
+                            "the written rotation (unverified)"]
+
+
+def test_exif_orientation_helper(samples):
+    assert jpeg_exif_orientation(exif_jpeg(6, 8, 8)) == 6
+    assert jpeg_exif_orientation(exif_jpeg(8, 8, 8)) == 8
+    assert jpeg_exif_orientation(exif_jpeg(9, 8, 8)) is None  # out of range
+    assert jpeg_exif_orientation(white_png(2, 2)) is None
+    assert jpeg_exif_orientation(b"\xff\xd8\xff\xd9") is None
+    assert jpeg_exif_orientation(b"\xff\xd8\xff\xe1\x00\x08Exif\x00\x00") is None  # truncated TIFF
+    assert jpeg_exif_orientation(exif_jpeg(3, 8, 8, big_endian=True)) == 3
+    assert [exif_rotation(o) for o in (None, 1, 2, 3, 6, 8)] == [None, 0.0, None, 180.0, 90.0, 270.0]
+    sample = samples.repo("goodparse") / "samples" / "Test9.goodnotes"
+    if not sample.is_file():
+        pytest.skip("Test9.goodnotes not available")
+    with zipfile.ZipFile(sample) as z:
+        photo = next((z.read(n) for n in z.namelist()
+                      if n.startswith("attachments/") and z.read(n)[:2] == b"\xff\xd8"), None)
+    if photo is None:
+        pytest.skip("Test9 has no JPEG attachment")
+    assert jpeg_exif_orientation(photo) == 6 and image_pixel_size(photo) == (3840, 2160)
+

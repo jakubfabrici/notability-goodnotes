@@ -41,6 +41,8 @@ HIGHLIGHTER_ALPHA = 0.5
 TEXT_PADDING = 10.0  # canvas units between a text box's outer rect and its text frame
 ELEMENT_MAGIC = 5381  # metadata #14, constant in every 2025/2026 file
 ELEMENT_CLOCK_VERSION = 2  # minimum clock version GoodNotes writes on untouched elements
+FILL_CLOCK_VERSION = 1  # ``#9.#3.#1`` edit clock of a fill record as first written (1, bumped on resize)
+FILL_ALPHA = 0.1  # alpha GoodNotes gives a shape fill (the model carries it; this is the fallback)
 EVENT_CLOCK_VERSION = 1  # clock version of the registers inside events (Test4)
 
 # --------------------------------------------------------------------------- fixed UUIDs
@@ -65,6 +67,14 @@ EVENT_NOTES_WRITTEN = 102
 CONTENT_IMAGE = 1
 CONTENT_STROKE = 7
 CONTENT_TEXT = 8
+CONTENT_FILL = 9  # shape fill of a closed auto-shape (goodnotes-v35-elements.md section 1)
+
+# --------------------------------------------------------------------------- image attachment kinds
+
+# ``#1.#6`` of an image record: absent on PNGs, 1 on JPEG photos, 3 on vector (PDF) stickers
+# (goodnotes-v35-elements.md section 5.1; the enum meaning is inferred from those samples).
+IMAGE_KIND_PHOTO = 1
+IMAGE_KIND_PDF = 3
 
 # --------------------------------------------------------------------------- page event colours
 

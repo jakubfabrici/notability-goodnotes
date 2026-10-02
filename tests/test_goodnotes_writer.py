@@ -24,8 +24,8 @@ import pytest
 from gnnote import applelz4, pdfutil, protobuf as pb, rtf, tpl
 from gnnote.goodnotes import constants as C
 from gnnote.goodnotes.writer import (
-    DASH_LENGTH, QUAD_MAX_DEPTH, QUAD_TOLERANCE, _cubic_to_quads, build_members, order_key,
-    stroke_to_flat, write_goodnotes,
+    DASH_LENGTH, QUAD_MAX_DEPTH, QUAD_TOLERANCE, _cubic_to_quads, build_members, displayed_box,
+    fill_matches_parent, order_key, stroke_to_flat, write_goodnotes,
 )
 from gnnote.model import Document, Image, Page, PdfBackground, Point, Stroke, TextBox, TextRun
 
@@ -80,6 +80,30 @@ def two_page_pdf(w1: float, h1: float, w2: float, h2: float) -> bytes:
         out.write(f"{off:010d} 00000 n \n".encode())
     out.write(f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
     return out.getvalue()
+
+
+def exif_jpeg(orientation: int, width: int, height: int) -> bytes:
+    """A minimal JPEG skeleton: SOI, APP1 Exif (orientation tag only), SOF0 (size), EOI."""
+    tiff = (b"II*\x00" + struct.pack("<I", 8) + struct.pack("<H", 1)
+            + struct.pack("<HHIHH", 0x0112, 3, 1, orientation, 0) + struct.pack("<I", 0))
+    app1 = b"Exif\x00\x00" + tiff
+    sof0 = struct.pack(">BHHB", 8, height, width, 3) + b"\x01\x22\x00\x02\x11\x01\x03\x11\x01"
+    return (b"\xff\xd8" + b"\xff\xe1" + struct.pack(">H", len(app1) + 2) + app1
+            + b"\xff\xc0" + struct.pack(">H", len(sof0) + 2) + sof0 + b"\xff\xd9")
+
+
+def ellipse_points(cx: float, cy: float, a: float, b: float, n: int = 64, w: float = 2.0) -> List[Point]:
+    return [Point(cx + a * math.cos(2 * math.pi * i / n), cy + b * math.sin(2 * math.pi * i / n), w)
+            for i in range(n + 1)]
+
+
+def filled_ellipse(cx: float, cy: float, a: float, b: float, color=(0.2, 0.6, 0.2, 1.0)) -> Tuple[Stroke, Stroke]:
+    """(auto-shape stroke, its fill) the way the reader reports a filled GoodNotes ellipse."""
+    pts = ellipse_points(cx, cy, a, b)
+    shape = Stroke(pts, color=color, width=2.0)
+    outline = [Point(p.x, p.y, 0.0) for p in pts]
+    fill = Stroke(list(outline), color=color[:3] + (0.1,), kind="fill", width=0.0, outline=[outline])
+    return shape, fill
 
 
 def wave(x0: float, y0: float, n: int = 20, w: float = 1.5, **kw: Any) -> Stroke:
@@ -347,7 +371,9 @@ def test_binding_chain_and_attachment_sizes(written):
         assert pb.string_value(pb.get(body, 1)) == pb.string_value(pb.get(body, 2)) == a
         assert pb.varint_value(pb.get(body, 5)) == len(blob)
         kind = pb.bytes_value(pb.get(body, 12))
-        assert kind == (b"\x08\x01\x10\x01" if blob.startswith(b"%PDF") else b"")
+        bound = any(pb.string_value(pb.get(t, 4)) == a for t in templates.values())
+        assert kind == (b"\x08\x01\x10\x01" if bound else b"")
+        assert bound == blob.startswith(b"%PDF")  # no stickers in this document
     doc_uuid = [entity for entity, num, _b in events if num == 30][0]
     pages = [body for _e, num, body in events if num == 54]
     sizes = []
@@ -615,6 +641,228 @@ def test_image_and_text_records(written):
     assert abs(runs[0].size - 12.0 * K) < 0.5  # canvas units
 
 
+def fill_of(content: pb.Field) -> Dict[int, Any]:
+    """Decoded fields of a ``#9`` fill body: bbox, polygon, parent, colour, clocks."""
+    assert content.number == C.CONTENT_FILL
+    body = pb.message_value(content)
+    rect = pb.message_value(pb.get(body, 2))
+    geometry = pb.message_value(pb.get(body, 4))
+    polygon_field = pb.get(geometry, 1)
+    polygon = [tuple(pb.fixed32_float(f) for f in pb.message_value(pt))
+               for pt in pb.message_value(polygon_field)]
+    return {
+        "uuid": pb.string_value(pb.get(body, 1)),
+        "fields": field_numbers(body),
+        "geometry_fields": field_numbers(geometry),
+        "bbox": [pb.fixed32_float(f) for f in pb.message_value(rect[0])]
+                + [pb.fixed32_float(f) for f in pb.message_value(rect[1])],
+        "edit_clock": pb.decode_message(pb.message_value(pb.get(body, 3))[0].value),
+        "polygon": polygon,
+        "parent": pb.string_value(pb.get(body, 5)),
+        "colour": {f.number: pb.fixed32_float(f) for f in pb.message_value(pb.get(body, 7))},
+        "clock": pb.bytes_value(pb.get(body, 15)),
+        "schema": pb.varint_value(pb.get(body, 18)),
+    }
+
+
+def test_fill_record_follows_its_parent():
+    shape, fill = filled_ellipse(150, 200, 60, 40)
+    doc = Document(title="Fills")
+    doc.pages = [Page(GN_W, GN_H, strokes=[shape, fill, wave(20, 400)])]
+    members = members_of(write_goodnotes(doc, Opts()))
+    assert not any("fill" in w for w in doc.warnings)
+    notes = [b for n, b in members.items() if n.startswith("notes/")][0]
+    pairs = element_pairs(notes)
+    assert [c.number for _m, c in pairs] == [7, 9, 7]
+    parent_body, _geo = stroke_of(pairs[0][1])
+    meta, content = pairs[1]
+    f = fill_of(content)
+    # record layout of goodnotes-v35-elements.md section 1.2
+    assert f["fields"] == {1, 2, 3, 4, 5, 6, 7, 15, 18}
+    assert f["uuid"] == pb.string_value(meta[0]) and len(f["uuid"]) == 36
+    assert f["parent"] == pb.string_value(parent_body[0])
+    assert f["geometry_fields"] == {1}  # closed polygon form
+    assert pb.bytes_value(pb.get(pb.message_value(content), 6)) == b""
+    assert f["schema"] == 24
+    # the polygon is the outline in canvas units, first point repeated last
+    outline = fill.outline[0]
+    assert len(f["polygon"]) == len(outline)  # 65 sampled points already close the ring
+    assert f["polygon"][0] == pytest.approx(f["polygon"][-1], abs=1e-4)
+    for (x, y), p in zip(f["polygon"], outline):
+        assert (x, y) == pytest.approx((p.x * K, p.y * K), abs=1e-3)
+    xs = [x for x, _y in f["polygon"]]
+    ys = [y for _x, y in f["polygon"]]
+    assert f["bbox"] == pytest.approx([min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)], abs=1e-3)
+    # colour with the fill alpha, 0.0 components omitted
+    assert f["colour"] == pytest.approx({1: 0.2, 2: 0.6, 3: 0.2, 4: 0.1}, abs=1e-6)
+    # clocks: #3 {#1 {#1 1, #2 nonce}}; metadata #2 == #15 == {#2 nonce} (no version)
+    assert [(e.number, e.value) for e in f["edit_clock"]][0] == (1, 1) and f["edit_clock"][1].number == 2
+    assert f["clock"] == pb.bytes_value(pb.get(meta, 2))
+    assert field_numbers(pb.decode_message(f["clock"])) == {2}
+    assert field_numbers(meta) == {1, 2, 8, 9, 14, 16}
+    assert pb.varint_value(pb.get(meta, 16)) == 24
+    # the fill does not consume a draw index: the next stroke is #2
+    next_body, _geo = stroke_of(pairs[2][1])
+    assert pb.varint_value(pb.message_value(pb.message_value(pb.get(next_body, 7))[0])[0]) == 2
+
+
+def test_fill_before_its_parent_is_written_after_it():
+    shape, fill = filled_ellipse(150, 200, 60, 40)
+    doc = Document(pages=[Page(GN_W, GN_H, strokes=[fill, shape, wave(20, 400)])])
+    members = members_of(write_goodnotes(doc, Opts()))
+    assert not any("fill" in w for w in doc.warnings)
+    notes = [b for n, b in members.items() if n.startswith("notes/")][0]
+    pairs = element_pairs(notes)
+    assert [c.number for _m, c in pairs] == [7, 9, 7]
+    parent_body, _geo = stroke_of(pairs[0][1])
+    assert fill_of(pairs[1][1])["parent"] == pb.string_value(parent_body[0])
+
+
+def test_fill_field_sets_match_test7(samples):
+    sample = samples.repo("goodparse") / "samples" / "Test7.goodnotes"
+    if not sample.is_file():
+        pytest.skip("Test7.goodnotes not available")
+    observed = set()
+    geometry_forms = set()
+    for name, blob in members_of(sample.read_bytes()).items():
+        if not name.startswith("notes/") or not blob:
+            continue
+        recs = pb.decode_records(blob)
+        for i in range(0, len(recs) - 1, 2):
+            meta = pb.decode_message(recs[i])
+            content = pb.decode_message(recs[i + 1])
+            if len(content) == 1 and content[0].number == C.CONTENT_FILL and pb.get(meta, 3) is None:
+                body = pb.message_value(content[0])
+                observed.add(field_numbers(body))
+                geometry_forms.add(field_numbers(pb.message_value(pb.get(body, 4))))
+    assert observed
+    shape, fill = filled_ellipse(100, 100, 30, 30)
+    doc = Document(pages=[Page(GN_W, GN_H, strokes=[shape, fill])])
+    notes = [b for n, b in members_of(write_goodnotes(doc, Opts())).items() if n.startswith("notes/")][0]
+    _meta, content = element_pairs(notes)[1]
+    assert field_numbers(pb.message_value(content)) in observed
+    assert fill_of(content)["geometry_fields"] in geometry_forms
+
+
+def test_fills_without_a_parent_are_skipped():
+    shape, fill = filled_ellipse(150, 200, 60, 40)
+    _other, orphan = filled_ellipse(300, 400, 20, 20)
+    empty = Stroke([], kind="fill", outline=[[]])
+    doc = Document(title="Orphans")
+    # a fill with no matching neighbour (twice), two in a row before a stroke, one without an
+    # outline, a good one, and one left over at the end of the page
+    doc.pages = [Page(GN_W, GN_H, strokes=[orphan, wave(20, 40), orphan, empty, shape, fill, orphan, orphan])]
+    members = members_of(write_goodnotes(doc, Opts()))
+    notes = [b for n, b in members.items() if n.startswith("notes/")][0]
+    assert [c.number for _m, c in element_pairs(notes)] == [7, 7, 9]
+    assert "4 shape fills were skipped (no neighbouring stroke matches them; GoodNotes binds a fill to the stroke it fills)" in doc.warnings
+    assert "1 shape fills without an outline were skipped" in doc.warnings
+    assert fill_matches_parent(fill.outline[0], shape)
+    assert not fill_matches_parent(orphan.outline[0], shape)
+    assert not fill_matches_parent(fill.outline[0], fill)  # a fill is never a parent
+    # a fill with several polygons keeps the first one and says so
+    multi = Stroke(list(fill.outline[0]), color=fill.color, kind="fill",
+                   outline=[fill.outline[0], [Point(0, 0), Point(1, 0), Point(1, 1)]])
+    doc = Document(pages=[Page(GN_W, GN_H, strokes=[shape, multi])])
+    notes = [b for n, b in members_of(write_goodnotes(doc, Opts())).items() if n.startswith("notes/")][0]
+    assert len(fill_of(element_pairs(notes)[1][1])["polygon"]) == len(fill.outline[0])
+    assert any("several polygons" in w for w in doc.warnings)
+
+
+def test_pdf_sticker_image():
+    sticker = two_page_pdf(254, 214, 254, 214)[:0] + pdfutil.make_paper_pdf(254, 214, "plain")
+    doc = Document(title="Sticker")
+    doc.pages = [Page(GN_W, GN_H, images=[Image(63.08, 31.55, 138.55, 116.73, sticker, "pdf")])]
+    members = members_of(write_goodnotes(doc, Opts()))
+    notes = [b for n, b in members.items() if n.startswith("notes/")][0]
+    meta, content = element_pairs(notes)[0]
+    body = pb.message_value(content)
+    assert content.number == C.CONTENT_IMAGE
+    assert field_numbers(body) == {1, 2, 3, 4, 5, 6, 15, 18}
+    assert pb.varint_value(pb.get(body, 6)) == 3
+    att = pb.string_value(pb.get(body, 4))
+    assert members["attachments/" + att] == sticker and pb.string_value(pb.get(meta, 4)) == att
+    rect = pb.message_value(pb.get(body, 2))
+    assert [pb.fixed32_float(f) for f in pb.message_value(rect[0])] == pytest.approx([63.08 * K, 31.55 * K], abs=1e-3)
+    assert [pb.fixed32_float(f) for f in pb.message_value(rect[1])] == pytest.approx([138.55 * K, 116.73 * K], abs=1e-3)
+    events = events_of(members)
+    att_event = [b for _e, n, b in events if n == 6 and pb.string_value(pb.get(b, 1)) == att][0]
+    assert pb.bytes_value(pb.get(att_event, 12)) == b""  # like a raster, not like paper
+    assert pb.varint_value(pb.get(att_event, 5)) == len(sticker)
+    # the sticker is not a template: only the generated paper binds a page
+    assert len([1 for _e, n, _b in events if n == 2]) == 1
+    assert len([n for n in members if n.startswith("attachments/")]) == 2
+    assert not any("PDF" in w and "display" in w for w in doc.warnings)
+    # a JPEG gets #6 = 1, a PNG no #6 at all
+    doc = Document(pages=[Page(GN_W, GN_H, images=[Image(0, 0, 10, 10, exif_jpeg(1, 4, 4), "jpeg"),
+                                                   Image(0, 0, 10, 10, white_png(4, 4), "png")])])
+    notes = [b for n, b in members_of(write_goodnotes(doc, Opts())).items() if n.startswith("notes/")][0]
+    kinds = [pb.get(pb.message_value(c), 6) for _m, c in element_pairs(notes)]
+    assert pb.varint_value(kinds[0]) == 1 and kinds[1] is None
+
+
+def test_exif_rotated_jpeg_keeps_bytes_and_gets_the_displayed_box():
+    photo = exif_jpeg(6, 96, 64)  # landscape pixels, EXIF says "rotate 90 degrees clockwise"
+    image = Image(100, 50, 96, 64, photo, "jpeg", rotation=90.0)
+    assert displayed_box(image) == pytest.approx((116, 34, 64, 96))
+    doc = Document(pages=[Page(GN_W, GN_H, images=[image])])
+    members = members_of(write_goodnotes(doc, Opts()))
+    notes = [b for n, b in members.items() if n.startswith("notes/")][0]
+    body = pb.message_value(element_pairs(notes)[0][1])
+    rect = pb.message_value(pb.get(body, 2))
+    crop = pb.message_value(pb.get(body, 3))
+    assert [pb.fixed32_float(f) for f in pb.message_value(rect[0])] == pytest.approx([116 * K, 34 * K], abs=1e-3)
+    assert [pb.fixed32_float(f) for f in pb.message_value(rect[1])] == pytest.approx([64 * K, 96 * K], abs=1e-3)
+    assert [pb.fixed32_float(f) for f in pb.message_value(crop[0])] == pytest.approx([148 * K, 82 * K], abs=1e-3)
+    assert pb.get(crop, 3) is None  # no #3.#3 rotation: unverified, never written
+    assert members["attachments/" + pb.string_value(pb.get(body, 4))] == photo
+    assert any("EXIF" in w for w in doc.warnings) and not any("dropped" in w for w in doc.warnings)
+    # 270 degrees with orientation 8, 180 with 3: box swapped / unchanged
+    assert displayed_box(Image(100, 50, 96, 64, exif_jpeg(8, 96, 64), rotation=270.0)) == pytest.approx((116, 34, 64, 96))
+    assert displayed_box(Image(100, 50, 96, 64, exif_jpeg(3, 96, 64), rotation=180.0)) == pytest.approx((100, 50, 96, 64))
+    assert displayed_box(Image(100, 50, 96, 64, exif_jpeg(6, 96, 64), rotation=-270.0)) == pytest.approx((116, 34, 64, 96))
+
+
+def test_image_rotation_without_matching_exif_is_dropped():
+    cases = [
+        Image(100, 50, 96, 64, white_png(4, 4), "png", rotation=90.0),  # PNG: no EXIF
+        Image(100, 50, 96, 64, exif_jpeg(1, 96, 64), "jpeg", rotation=90.0),  # EXIF upright
+        Image(100, 50, 96, 64, exif_jpeg(8, 96, 64), "jpeg", rotation=90.0),  # EXIF says the other way
+        Image(100, 50, 96, 64, exif_jpeg(6, 96, 64), "jpeg", rotation=17.0),  # not a quarter turn
+    ]
+    for image in cases:
+        assert displayed_box(image) == (100, 50, 96, 64)
+    doc = Document(pages=[Page(GN_W, GN_H, images=cases)])
+    members = members_of(write_goodnotes(doc, Opts()))
+    assert "4 image rotations were dropped (GoodNotes has no verified image rotation field)" in doc.warnings
+    notes = [b for n, b in members.items() if n.startswith("notes/")][0]
+    for _meta, content in element_pairs(notes):
+        rect = pb.message_value(pb.get(pb.message_value(content), 2))
+        assert [pb.fixed32_float(f) for f in pb.message_value(rect[1])] == pytest.approx([96 * K, 64 * K], abs=1e-3)
+    assert displayed_box(Image(0, 0, 10, 10, white_png(4, 4), rotation=360.0)) == (0, 0, 10, 10)
+
+
+def test_text_alignment_and_rotation():
+    boxes = [TextBox(50, 80, 200, 30, "centred", align="center", rotation=12.0),
+             TextBox(50, 120, 200, 30, "right", align="right"),
+             TextBox(50, 160, 200, 30, "left", align="left")]
+    doc = Document(pages=[Page(GN_W, GN_H, texts=boxes)])
+    members = members_of(write_goodnotes(doc, Opts()))
+    notes = [b for n, b in members.items() if n.startswith("notes/")][0]
+    payloads = [pb.bytes_value(pb.get(pb.message_value(c), 6)) for _m, c in element_pairs(notes)]
+    assert b"\\qc\\pardirnatural" in payloads[0] and b"\\qr" not in payloads[0]
+    assert b"\\qr\\pardirnatural" in payloads[1] and b"\\qc" not in payloads[1]
+    assert b"\\qc" not in payloads[2] and b"\\qr" not in payloads[2]
+    assert payloads[0].index(b"\\pard") < payloads[0].index(b"\\qc") < payloads[0].index(b"\\pardirnatural")
+    for payload, box in zip(payloads, boxes):
+        text, _runs = rtf.parse_rtf(payload)
+        assert text == box.text
+    assert "1 text box rotations were dropped (GoodNotes RTF text boxes cannot be rotated)" in doc.warnings
+    # the frame of the rotated box is written unrotated at the model's top-left corner
+    inner = pb.message_value(pb.get(pb.message_value(element_pairs(notes)[0][1]), 3))
+    assert [pb.fixed32_float(f) for f in pb.message_value(inner[0])] == pytest.approx([50 * K, 80 * K], abs=1e-3)
+
+
 # ---------------------------------------------------------------------------------------
 # 5. options and edge cases
 
@@ -783,7 +1031,16 @@ def test_oracle_parser_for_goodnotes(samples, written, tmp_path):
     assert rtf_texts and "Ahoj" in rtf_texts[0] and "svet" in rtf_texts[0] and "riadok dva" in rtf_texts[0]
 
 
+def bbox_of(points: Sequence[Sequence[float]]) -> Tuple[float, float, float, float]:
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
 def test_oracle_goodparse(samples, tmp_path):
+    """goodparse (GPL, subprocess) only answers "opens, page count, stroke count, colours";
+    its flat-stroke decoding changed between versions, so geometry is checked against
+    parser-for-goodnotes (bounding boxes) instead of goodparse's point lists."""
     doc = uniform_document()
     data = write_goodnotes(doc, Opts())
     path = tmp_path / "uniform.goodnotes"
@@ -798,12 +1055,15 @@ def test_oracle_goodparse(samples, tmp_path):
         for s, stroke in zip(p["strokes"], page.strokes):
             assert s["kind"] == "pen"
             assert s["color"] == pytest.approx(list(stroke.color), abs=1e-6)
-            # goodparse's flag-run path drops the start point and returns the first N stored
-            # pairs (c1, e1, c2, e2, ...) of the N quads; all of them lie on the polyline.
+            assert len(s["points"]) >= 2
+    pfg = run_oracle(samples, "parser-for-goodnotes", "src", PFG_SCRIPT, path)
+    assert [len(p["strokes"]) for p in pfg] == [3, 1]
+    for p, page in zip(pfg, doc.pages):
+        for s, stroke in zip(p["strokes"], page.strokes):
             poly = [(q.x * K, q.y * K) for q in stroke.points]
-            assert len(s["points"]) == len(poly) - 1
-            mid = ((poly[0][0] + poly[1][0]) / 2, (poly[0][1] + poly[1][1]) / 2)
-            assert (s["points"][0][0], s["points"][0][1]) == pytest.approx(mid, abs=1e-3)
-            assert (s["points"][1][0], s["points"][1][1]) == pytest.approx(poly[1], abs=1e-3)
-            for x, y, _w in s["points"]:
+            # start + (control, end) pairs: the bbox of a midpoint-controlled polyline is its own
+            assert bbox_of(s["points"]) == pytest.approx(bbox_of(poly), abs=0.05)
+            channels = [int(s["color"][i:i + 2], 16) for i in (1, 3, 5)]
+            assert channels == pytest.approx([c * 255 for c in stroke.color[:3]], abs=0.51)
+            for x, y, _pr in s["points"]:
                 assert dist_to_polyline((x, y), poly) < 0.6

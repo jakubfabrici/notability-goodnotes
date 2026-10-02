@@ -516,3 +516,15 @@ in this environment).
   Sub-path splitting at 0-flags is unaffected.
 * **`#3 = 1` elements** (1 636 in the corpus) all have an empty 62-byte TPL and unique UUIDs;
   skipping them (as §1 says) loses no visible ink whatever their exact semantics are.
+
+## Addendum (schema 25/35)
+
+`goodnotes-v35-elements.md` (Test6–Test9, GoodNotes 2026-09/10) adds the element kinds and
+corrections that this document could not see (its §9 lists them): content kind `#9` = the 10 %
+alpha fill of a closed auto-shape, linked to its outline stroke by `#5`; content kind `#21` =
+the schema-35 text element (sticker letters and typed text, runs in an Apple-LZ4 blob under
+`#32.#1.#2`, transform `#20`, insets `#32.#10`); image attachments may be die-cut sticker PDFs
+(`#6 = 3`) and JPEG photos keep their EXIF orientation with `#2` holding the displayed size;
+`#7.#9.#2 {P0, C, P1}` is one quadratic Bézier, not a polyline; shape widths render at `W/2`
+pt. `goodnotes-v35-strokes.md` covers the stroke-level findings (32 KiB LZ4 blocks, the 8-byte
+`bv4-` header, the flags-4/5 marker band, pencil force attributes).

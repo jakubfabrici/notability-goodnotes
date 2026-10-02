@@ -46,6 +46,16 @@ Media: ``richText.mediaObjects`` holds ``ImageMediaObject`` (Figure -> ImageObje
 pointing at ``Images/...``) and ``TextBlockMediaObject`` (a nested ``FormattedString`` text
 store with the attributed string) in the field layout of Notability 10.2.4 output.
 
+What the model carries that Notability cannot hold is dropped with one counted warning each:
+``Stroke.kind == "fill"`` (no filled shapes) and ``Image.fmt == "pdf"`` (vector stickers; images
+must be PNG or JPEG).  ``Image.rotation`` and ``TextBox.rotation`` go to ``rotationDegrees``
+(radians, clockwise, about the object's centre); a text box rotates about its top-left corner
+in the model, so its origin is moved to where the centre-pivot rotation lands the same corner.
+A JPEG with an EXIF orientation other than 1 is written byte for byte; whether Notability
+applies that orientation on top of ``rotationDegrees`` is unverified (warning).
+``TextBox.align`` becomes the text store's ``formattedStringTextAlignmentKey`` (0 left,
+1 centre, 2 right).
+
 Only the standard library is used.
 """
 from __future__ import annotations
@@ -68,7 +78,8 @@ from .archivebuilder import (
     INT64_MAX, ArchiveBuilder, color_string, point_string, range_string, rect_string, size_string,
 )
 
-__all__ = ["write_note", "LEGACY_ASPECT", "DEFAULT_PAGE_WIDTH", "white_png", "image_pixel_size"]
+__all__ = ["write_note", "LEGACY_ASPECT", "DEFAULT_PAGE_WIDTH", "white_png", "image_pixel_size",
+           "jpeg_exif_orientation", "exif_rotation"]
 
 LEGACY_ASPECT = 1.3125  # plain page height / width (803.25 / 612)
 DEFAULT_PAGE_WIDTH = 574.0  # pageWidthInDocumentCoordsKey of the 10.4 template
@@ -81,6 +92,7 @@ MIN_FRACTION, MAX_FRACTION = 0.25, 4.0
 THUMB_SIZES = (("thumb.png", 48, 63), ("thumb2x.png", 96, 126), ("thumb3x.png", 144, 189), ("thumb6x.png", 288, 378))
 TEXT_PAD_X, TEXT_PAD_Y = 5.0, 2.0  # text inset inside a Notability text box (doc units)
 DEFAULT_FONT = "HelveticaNeue"
+TEXT_ALIGNMENT = {"left": 0, "center": 1, "right": 2}  # formattedStringTextAlignmentKey
 
 
 # ---------------------------------------------------------------------------------------
@@ -230,8 +242,12 @@ def _build_ink(doc: Document, slots: Sequence[_Slot], options: Any) -> Dict[str,
     colors: List[bytes] = []
     styles: List[int] = []
     tokens: List[int] = []
+    fills = 0
     for slot in slots:
         for stroke in slot.page.strokes:
+            if stroke.kind == "fill":
+                fills += 1
+                continue
             geom = _curve_geometry(stroke, slot, tolerance, doc)
             if geom is None:
                 doc.warn("Empty strokes were dropped")
@@ -268,6 +284,8 @@ def _build_ink(doc: Document, slots: Sequence[_Slot], options: Any) -> Dict[str,
             fractions += frac
             colors.append(bytes(rgba))
             tokens.append(-1)
+    if fills:
+        doc.warn(f"{fills} shape fills dropped (Notability has no filled shapes)")
     return {
         "curvespoints": struct.pack(f"<{len(points)}f", *points),
         "curvesnumpoints": struct.pack(f"<{len(numpoints)}i", *numpoints),
@@ -311,14 +329,96 @@ def image_pixel_size(data: bytes) -> Optional[Tuple[int, int]]:
     return None
 
 
+def jpeg_exif_orientation(data: bytes) -> Optional[int]:
+    """The EXIF ``Orientation`` tag (1..8) of a JPEG, ``None`` when absent or unreadable.
+
+    Only the first APP1 segment with an ``Exif`` header is read (TIFF header, IFD0, tag
+    0x0112).  6 means "rotate 90 degrees clockwise to display", 8 "90 counter-clockwise",
+    3 "180"; see :func:`exif_rotation`.
+    """
+    if data[:2] != b"\xff\xd8":
+        return None
+    pos = 2
+    while pos + 4 <= len(data):
+        if data[pos] != 0xFF:
+            return None
+        marker = data[pos + 1]
+        if marker == 0xFF:
+            pos += 1
+            continue
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            pos += 2
+            continue
+        if marker in (0xDA, 0xD9):  # start of scan / end of image: no EXIF before the pixels
+            return None
+        length = struct.unpack(">H", data[pos + 2:pos + 4])[0]
+        segment = data[pos + 4:pos + 2 + length]
+        if marker == 0xE1 and segment[:6] == b"Exif\x00\x00":
+            tiff = segment[6:]
+            if tiff[:4] == b"II*\x00":
+                order = "<"
+            elif tiff[:4] == b"MM\x00*":
+                order = ">"
+            else:
+                return None
+            if len(tiff) < 8:
+                return None
+            ifd = struct.unpack(order + "I", tiff[4:8])[0]
+            if ifd + 2 > len(tiff):
+                return None
+            count = struct.unpack(order + "H", tiff[ifd:ifd + 2])[0]
+            for i in range(count):
+                entry = tiff[ifd + 2 + 12 * i:ifd + 14 + 12 * i]
+                if len(entry) < 12:
+                    return None
+                tag, kind, n = struct.unpack(order + "HHI", entry[:8])
+                if tag == 0x0112 and kind == 3 and n >= 1:
+                    value = struct.unpack(order + "H", entry[8:10])[0]
+                    return value if 1 <= value <= 8 else None
+            return None
+        pos += 2 + length
+    return None
+
+
+def exif_rotation(orientation: Optional[int]) -> Optional[float]:
+    """Clockwise display rotation in degrees implied by an EXIF orientation (mirrored
+    orientations 2, 4, 5 and 7 have no pure rotation and give ``None``)."""
+    return {1: 0.0, 3: 180.0, 6: 90.0, 8: 270.0}.get(orientation or 0)
+
+
 def _image_format(image: Image) -> str:
     data = image.data
     if data[:8] == b"\x89PNG\r\n\x1a\n":
         return "png"
     if data[:2] == b"\xff\xd8":
         return "jpeg"
+    if data[:5] == b"%PDF-":
+        return "pdf"
     fmt = (image.fmt or "").lower()
-    return "png" if fmt == "png" else "jpeg" if fmt in ("jpeg", "jpg") else "png"
+    return "png" if fmt == "png" else "jpeg" if fmt in ("jpeg", "jpg") else "pdf" if fmt == "pdf" else "png"
+
+
+# ---------------------------------------------------------------------------------------
+# text box rotation
+
+
+def text_origin_for_centre_pivot(origin: Tuple[float, float], size: Tuple[float, float],
+                                 pivot: Tuple[float, float], theta: float) -> Tuple[float, float]:
+    """Origin of a box rotated about its centre that lands where the same box rotated about
+    ``pivot`` (box-local, usually the text frame's top-left corner) would.
+
+    ``theta`` is in radians, positive clockwise in the y-down document plane (the standard
+    rotation matrix, as both apps use).  Rotating about the pivot keeps the pivot in place; its
+    centre then sits at ``pivot + R(theta) * (centre - pivot)`` and the centre-pivot box must
+    be placed so its centre is there.
+    """
+    w, h = size
+    px, py = pivot
+    cx, cy = w / 2.0 - px, h / 2.0 - py  # centre relative to the pivot, unrotated
+    cos_t, sin_t = math.cos(theta), math.sin(theta)
+    rx, ry = cx * cos_t - cy * sin_t, cx * sin_t + cy * cos_t
+    centre = (origin[0] + px + rx, origin[1] + py + ry)
+    return centre[0] - w / 2.0, centre[1] - h / 2.0
 
 
 # ---------------------------------------------------------------------------------------
@@ -351,6 +451,8 @@ class _SessionBuilder:
         self.z_index = 0
         self.image_files: List[Tuple[str, bytes]] = []
         self.pdf_names: Dict[str, str] = {}
+        self.pdf_images = 0  # Image.fmt == "pdf" stickers dropped
+        self.exif_rotated = 0  # rotated JPEGs that also carry an EXIF orientation
 
     # -- helpers ----------------------------------------------------------------------
 
@@ -391,8 +493,8 @@ class _SessionBuilder:
         return b.object("InkedSpatialHash", fields)
 
     def formatted_string(self, hash_uid: Any, reflow: Any, text: str, subranges: Sequence[Any],
-                         layout: Any, pdf_files: Any, media: Any) -> Any:
-        """A ``FormattedString`` with the template's full key set."""
+                         layout: Any, pdf_files: Any, media: Any, alignment: int = 0) -> Any:
+        """A ``FormattedString`` with the template's full key set (``alignment``: 0/1/2)."""
         b = self.b
         length = len(text.encode("utf-16-le")) // 2
         timestamp_sub = b.dictionary([
@@ -406,7 +508,7 @@ class _SessionBuilder:
         return b.object("FormattedString", {
             "formatVersion": 4,
             "pageLayoutArray": layout,
-            "formattedStringTextAlignmentKey": 0,
+            "formattedStringTextAlignmentKey": int(alignment),
             "attributedString": self.attributed(text, subranges, b.string(text)),
             "NBAttributedBackingString": backing,
             "Handwriting Overlay": b.object("HandwritingObject", {"SpatialHash": hash_uid}),
@@ -487,6 +589,12 @@ class _SessionBuilder:
             self.doc.warn("Images without data were dropped")
             return None
         fmt = _image_format(image)
+        if fmt == "pdf":
+            self.pdf_images += 1
+            return None
+        rotation = float(image.rotation or 0.0)
+        if fmt == "jpeg" and rotation % 360.0 > 1e-6 and (jpeg_exif_orientation(image.data) or 1) != 1:
+            self.exif_rotated += 1
         ext = "png" if fmt == "png" else "jpg"
         index = len(self.image_files)
         name = f"Images/Image {'' if index == 0 else index}.{ext}"
@@ -575,15 +683,20 @@ class _SessionBuilder:
         b = self.b
         s = slot.scale
         text, subranges = self.text_subranges(box, s)
+        alignment = TEXT_ALIGNMENT.get((box.align or "left").lower(), 0)
         store = self.formatted_string(
             self.empty_hash(),
             b.object("NBReflowStateReflowable", {}),
             text, subranges,
             self.shared_empty(), self.shared_empty(), self.shared_empty(),
+            alignment=alignment,
         )
         origin = (slot.x_offset + box.x * s - TEXT_PAD_X, slot.y_offset + box.y * s - TEXT_PAD_Y)
         size = (max(box.w * s, 1.0) + 2 * TEXT_PAD_X, max(box.h * s, 1.0) + 2 * TEXT_PAD_Y)
-        fields = self._media_common(origin, size, 0.0)
+        theta = math.radians(float(box.rotation or 0.0))
+        if abs(theta) > 1e-9:
+            origin = text_origin_for_centre_pivot(origin, size, (TEXT_PAD_X, TEXT_PAD_Y), theta)
+        fields = self._media_common(origin, size, theta)
         fields["paperIndex"] = -1
         fields["lineStyle"] = 0
         fields["paperStyleObject"] = b.object("Notability.NBPaperStyle", {
@@ -610,6 +723,11 @@ class _SessionBuilder:
                     media_uids.append(uid)
             for box in slot.page.texts:
                 media_uids.append(self.text_object(box, slot))
+        if self.pdf_images:
+            self.doc.warn(f"{self.pdf_images} PDF images dropped (Notability images must be PNG or JPEG)")
+        if self.exif_rotated:
+            self.doc.warn(f"{self.exif_rotated} rotated photos carry an EXIF orientation; Notability may apply "
+                          "it on top of the written rotation (unverified)")
         media = b.array(media_uids) if media_uids else self.shared_empty()
         reflow = b.object("NBReflowStateLocked", {
             "pageWidthInDocumentCoordsKey": float(self.width),

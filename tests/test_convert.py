@@ -15,6 +15,15 @@ Stroke counting: our GoodNotes reader emits one model stroke per TPL sub-path (e
 elements and pencil elements carry several), and both writers write exactly one element /
 curve per model stroke, so model stroke counts are preserved by every conversion.  Where an
 oracle counts GoodNotes *elements* instead, the tests count elements independently.
+
+Content only the newest GoodNotes files carry (schema 25/35, ``docs/goodnotes-v35-*.md``)
+does not survive the Notability leg by design (``design.md`` 4.2): shape fills
+(``Stroke.kind == "fill"``) and vector-sticker PDF images (``Image.fmt == "pdf"``) are
+dropped with a warning, so the GoodNotes -> Notability comparisons use the surviving ink
+and raster images (:func:`_ink`, :func:`_rasters`).  Every sample file the fixture finds is
+checked against invariants; exact expectations exist only for the pinned files of
+:data:`GOODNOTES_EXPECTED` (page sizes from GoodNotes' own PDF exports, counts from the
+research documents).
 """
 from __future__ import annotations
 
@@ -38,7 +47,7 @@ from gnnote.convert import (EXTENSIONS, GOODNOTES, NOTABILITY, ConvertResult, Op
                             detect_format, document_stats, other_format, output_filename, to_document)
 from gnnote.goodnotes.reader import read_goodnotes
 from gnnote.goodnotes.writer import write_goodnotes
-from gnnote.model import Document, Page, PdfBackground, Point, Stroke, TextBox
+from gnnote.model import Document, Image, Page, PdfBackground, Point, Stroke, TextBox
 from gnnote.notability.reader import PLAIN_PAGE_WIDTH_PT, read_note
 from gnnote.notability.writer import LEGACY_ASPECT, write_note
 
@@ -54,6 +63,21 @@ def _read(path: Path) -> bytes:
 
 def _first(stroke: Stroke) -> XY:
     return stroke.points[0].x, stroke.points[0].y
+
+
+def _ink(page: Page) -> List[Stroke]:
+    """The strokes of a page that survive a conversion to Notability (no shape fills)."""
+    return [s for s in page.strokes if s.kind != "fill"]
+
+
+def _rasters(page: Page) -> List[Image]:
+    """The images of a page that survive a conversion to Notability (PNG / JPEG only)."""
+    return [im for im in page.images if im.fmt != "pdf" and not im.data.startswith(b"%PDF-")]
+
+
+def _is_user_pdf_page(page: Page) -> bool:
+    """A page that is PDF-backed in every Notability paper mode (design.md 4.2)."""
+    return page.background is not None and not page.template_is_builtin
 
 
 def _rgb8(color: Sequence[float]) -> Tuple[int, int, int]:
@@ -229,6 +253,63 @@ def test_convert_rejects_garbage() -> None:
 
 # --------------------------------------------------------------------------- GoodNotes -> Notability
 
+STD = (455.04, 588.45)  # GoodNotes "standard" paper
+A4 = (595.28, 841.89)
+
+# file -> what ``convert`` reports for it (``stats``: pages / strokes / images / texts / user
+# PDFs) plus the page sizes in display order and the counts of content that cannot reach
+# Notability (shape fills among the strokes, PDF stickers among the images).  Test6 .. Test9:
+# docs/goodnotes-v35-elements.md section 0 (fills are counted as strokes by the reader);
+# Test9's seven sizes are those of GoodNotes' export Test9.pdf (binding doc section 9.1).
+GOODNOTES_EXPECTED: Dict[str, Dict[str, Any]] = {
+    "Test4.goodnotes": {"stats": {"pages": 2, "strokes": 5, "images": 0, "texts": 0, "pdfs": 0},
+                        "sizes": [STD] * 2, "fills": 0, "pdf_images": 0},
+    "Test5.goodnotes": {"stats": {"pages": 3, "strokes": 65, "images": 1, "texts": 2, "pdfs": 0},
+                        "sizes": [STD] * 3, "fills": 0, "pdf_images": 0},
+    "Test6.goodnotes": {"stats": {"pages": 5, "strokes": 21, "images": 0, "texts": 5, "pdfs": 0},
+                        "sizes": [STD] * 5, "fills": 3, "pdf_images": 0},
+    "Test7.goodnotes": {"stats": {"pages": 4, "strokes": 27, "images": 0, "texts": 14, "pdfs": 0},
+                        "sizes": [STD] * 4, "fills": 3, "pdf_images": 0},
+    "Test8.goodnotes": {"stats": {"pages": 4, "strokes": 10, "images": 0, "texts": 0, "pdfs": 0},
+                        "sizes": [STD] * 4, "fills": 4, "pdf_images": 0},
+    "Test9.goodnotes": {"stats": {"pages": 7, "strokes": 162, "images": 2, "texts": 4, "pdfs": 3},
+                        "sizes": [A4, A4, A4, A4, (1280.0, 905.0), (595.2, 841.68), (454.91, 143.28)],
+                        "fills": 0, "pdf_images": 1},
+    "test.goodnotes": {"stats": {"pages": 1, "strokes": 1, "images": 0, "texts": 0, "pdfs": 0},
+                       "sizes": [A4], "fills": 0, "pdf_images": 0},
+    "test2.goodnotes": {"stats": {"pages": 1, "strokes": 1, "images": 0, "texts": 0, "pdfs": 0},
+                        "sizes": [A4], "fills": 0, "pdf_images": 0},
+    "test3.goodnotes": {"stats": {"pages": 1, "strokes": 2, "images": 0, "texts": 0, "pdfs": 0},
+                        "sizes": [A4], "fills": 0, "pdf_images": 0},
+    "ex1.goodnotes": {"stats": {"pages": 1, "strokes": 1494, "images": 3, "texts": 0, "pdfs": 0},
+                      "sizes": [STD], "fills": 0, "pdf_images": 0},
+    "ex2.goodnotes": {"stats": {"pages": 1, "strokes": 28, "images": 0, "texts": 0, "pdfs": 0},
+                      "sizes": [STD], "fills": 0, "pdf_images": 0},
+    "ex3.goodnotes": {"stats": {"pages": 1, "strokes": 2459, "images": 2, "texts": 0, "pdfs": 0},
+                      "sizes": [STD], "fills": 0, "pdf_images": 0},
+    "record.goodnotes": {"stats": {"pages": 2, "strokes": 12, "images": 0, "texts": 0, "pdfs": 0},
+                         "sizes": [STD] * 2, "fills": 0, "pdf_images": 0},
+}
+
+
+def _check_goodnotes_expectations(samples, path: Path, src: Document, result: ConvertResult) -> None:
+    """Invariants for any GoodNotes sample, exact values for the pinned ones."""
+    assert result.stats == document_stats(src)
+    assert result.stats["pages"] == len(src.pages) >= 1, path.name
+    assert all(p.width > 0 and p.height > 0 for p in src.pages), path.name
+    expected = samples.expected_for(path, GOODNOTES_EXPECTED)
+    if expected is None:
+        return
+    assert result.stats == expected["stats"], path.name
+    assert [(round(p.width, 2), round(p.height, 2)) for p in src.pages] == expected["sizes"], path.name
+    assert sum(len(p.strokes) - len(_ink(p)) for p in src.pages) == expected["fills"], path.name
+    assert sum(len(p.images) - len(_rasters(p)) for p in src.pages) == expected["pdf_images"], path.name
+    if expected["fills"]:
+        assert any("shape fills dropped" in w for w in result.warnings), result.warnings
+    if expected["pdf_images"]:
+        assert any("PDF images dropped" in w for w in result.warnings), result.warnings
+
+
 @pytest.mark.parametrize("paper", ["plain", "pdf"])
 def test_goodnotes_to_notability_roundtrip(samples, paper: str) -> None:
     width = 574.0
@@ -238,11 +319,11 @@ def test_goodnotes_to_notability_roundtrip(samples, paper: str) -> None:
         src = read_goodnotes(data)
         result = convert(data, path.name, Options(paper=paper))
         assert result.filename == path.stem + ".note"
-        assert result.stats["pages"] == len(src.pages)
+        _check_goodnotes_expectations(samples, path, src, result)
         back = read_note(result.data)
         assert len(back.pages) == len(src.pages), path.name
-        assert sum(len(p.strokes) for p in back.pages) == sum(len(p.strokes) for p in src.pages), path.name
-        assert sum(len(p.images) for p in back.pages) == sum(len(p.images) for p in src.pages), path.name
+        assert sum(len(p.strokes) for p in back.pages) == sum(len(_ink(p)) for p in src.pages), path.name
+        assert sum(len(p.images) for p in back.pages) == sum(len(_rasters(p)) for p in src.pages), path.name
         assert sum(len(p.texts) for p in back.pages) == sum(len(p.texts) for p in src.pages), path.name
 
         # Expected document-space coordinates of every source first anchor and the matching
@@ -254,14 +335,14 @@ def test_goodnotes_to_notability_roundtrip(samples, paper: str) -> None:
         exp_scale: List[float] = []
         y = 0.0
         for page in src.pages:
-            if paper == "plain" and (page.background is None or page.template_is_builtin):
+            if paper == "plain" and not _is_user_pdf_page(page):
                 scale, x_off = _plain_transform(page, width)
                 y_off, slot_h = y, plain_h
             else:
                 scale, x_off = width / page.width, 0.0
                 slot_h = float(math.ceil(page.height * scale))
                 y_off = y + (slot_h - page.height * scale)
-            for s in page.strokes:
+            for s in _ink(page):
                 expected.append((x_off + s.points[0].x * scale, y_off + s.points[0].y * scale))
                 exp_strokes.append(s)
                 exp_scale.append(scale)
@@ -303,7 +384,7 @@ def test_goodnotes_to_notability_widths_and_pressure_flag(samples) -> None:
         src = read_goodnotes(data)
         for pressure in (True, False):
             back = read_note(convert(data, path.name, Options(paper="pdf", pressure=pressure)).data)
-            exp = [_median_width(s) for p in src.pages for s in p.strokes]
+            exp = [_median_width(s) for p in src.pages for s in _ink(p)]
             got = [_median_width(s) for p in back.pages for s in p.strokes]
             assert len(exp) == len(got)
             for e, g in zip(exp, got):
@@ -418,34 +499,36 @@ def test_goodnotes_note_goodnotes_chain(samples, paper: str) -> None:
         assert step2.filename == path.stem + ".goodnotes"
         back = read_goodnotes(step2.data)
         assert len(back.pages) == len(src.pages), path.name
-        assert sum(len(p.strokes) for p in back.pages) == sum(len(p.strokes) for p in src.pages), path.name
-        assert sum(len(p.images) for p in back.pages) == sum(len(p.images) for p in src.pages), path.name
+        assert sum(len(p.strokes) for p in back.pages) == sum(len(_ink(p)) for p in src.pages), path.name
+        assert sum(len(p.images) for p in back.pages) == sum(len(_rasters(p)) for p in src.pages), path.name
         assert sum(len(p.texts) for p in back.pages) == sum(len(p.texts) for p in src.pages), path.name
-        if paper == "pdf":
-            # PDF-backed pages keep the original paper, size and coordinates 1:1
-            for i, (a, b) in enumerate(zip(src.pages, back.pages)):
+        assert not any(s.kind == "fill" for p in back.pages for s in p.strokes), path.name
+        # PDF-backed pages (every page in "pdf" mode, user-PDF pages in both modes) keep the
+        # original paper, size and coordinates 1:1; plain pages come back as 612 x 803.25 pt
+        # with coordinates scaled by the plain transform and then by 612 / W, horizontally
+        # centred when the page was taller than Notability's plain page
+        factor, offset = [], []
+        for i, (a, b) in enumerate(zip(src.pages, back.pages)):
+            if paper == "pdf" or _is_user_pdf_page(a):
                 assert abs(a.width - b.width) < 0.05 and abs(a.height - b.height) < 0.05, (path.name, i)
-            factor = [1.0] * len(src.pages)
-            offset = [0.0] * len(src.pages)
-        else:
-            # plain pages come back as 612 x 803.25 pt; coordinates are scaled by the plain
-            # transform and then by 612 / W, and horizontally centred when the page was taller
-            # than Notability's plain page
-            factor, offset = [], []
-            for a in src.pages:
+                assert b.background is not None, (path.name, i)
+                factor.append(1.0)
+                offset.append(0.0)
+            else:
                 scale, x_off = _plain_transform(a, 574.0)
                 factor.append(scale * PLAIN_PAGE_WIDTH_PT / 574.0)
                 offset.append(x_off * PLAIN_PAGE_WIDTH_PT / 574.0)
         for i, (a, b) in enumerate(zip(src.pages, back.pages)):
-            exp = [(offset[i] + s.points[0].x * factor[i], s.points[0].y * factor[i]) for s in a.strokes]
+            ink = _ink(a)
+            exp = [(offset[i] + s.points[0].x * factor[i], s.points[0].y * factor[i]) for s in ink]
             got = [_first(s) for s in b.strokes]
             if len(exp) != len(got):
                 continue  # strokes starting outside the page may change pages on the way (checked globally)
             pairs, unmatched = _match_pairs(exp, got, 1.0 * factor[i])
             assert not unmatched, f"{path.name} page {i + 1}: {len(unmatched)} strokes moved by more than 1 pt"
             for x, yv in pairs:
-                assert _rgb8(a.strokes[x].color) == _rgb8(b.strokes[yv].color)
-                assert (a.strokes[x].kind == "highlighter") == (b.strokes[yv].kind == "highlighter")
+                assert _rgb8(ink[x].color) == _rgb8(b.strokes[yv].color)
+                assert (ink[x].kind == "highlighter") == (b.strokes[yv].kind == "highlighter")
 
 
 # --------------------------------------------------------------------------- PoC parity

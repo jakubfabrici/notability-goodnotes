@@ -12,7 +12,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import pytest
 
@@ -231,11 +231,41 @@ def test_batch_default_output_is_the_input_directory(note_file: Path) -> None:
 
 # --------------------------------------------------------------------------- samples
 
-# Exact expectations for sample files whose content is pinned by the reader tests; every other
-# file only has to satisfy the invariants below.
+# Exact totals for the pinned sample files (the GoodNotes ones agree with GOODNOTES_EXPECTED
+# in test_convert.py; Test6 .. Test9 from docs/goodnotes-v35-elements.md section 0, fills
+# counted as strokes, the Test9 sticker PDF and photo as images, its Figma / form / strip
+# PDFs as user PDFs); every other file only has to satisfy the invariants below.
 INFO_EXPECTED: Dict[str, Dict[str, int]] = {
+    "Test4.goodnotes": {"pages": 2, "strokes": 5, "images": 0, "texts": 0, "pdfs": 0},
     "Test5.goodnotes": {"pages": 3, "strokes": 65, "images": 1, "texts": 2, "pdfs": 0},
+    "Test6.goodnotes": {"pages": 5, "strokes": 21, "images": 0, "texts": 5, "pdfs": 0},
+    "Test7.goodnotes": {"pages": 4, "strokes": 27, "images": 0, "texts": 14, "pdfs": 0},
+    "Test8.goodnotes": {"pages": 4, "strokes": 10, "images": 0, "texts": 0, "pdfs": 0},
+    "Test9.goodnotes": {"pages": 7, "strokes": 162, "images": 2, "texts": 4, "pdfs": 3},
+    "test.goodnotes": {"pages": 1, "strokes": 1, "images": 0, "texts": 0, "pdfs": 0},
+    "test2.goodnotes": {"pages": 1, "strokes": 1, "images": 0, "texts": 0, "pdfs": 0},
+    "test3.goodnotes": {"pages": 1, "strokes": 2, "images": 0, "texts": 0, "pdfs": 0},
+    "ex1.goodnotes": {"pages": 1, "strokes": 1494, "images": 3, "texts": 0, "pdfs": 0},
+    "ex2.goodnotes": {"pages": 1, "strokes": 28, "images": 0, "texts": 0, "pdfs": 0},
+    "ex3.goodnotes": {"pages": 1, "strokes": 2459, "images": 2, "texts": 0, "pdfs": 0},
+    "record.goodnotes": {"pages": 2, "strokes": 12, "images": 0, "texts": 0, "pdfs": 0},
     "example.note": {"pages": 1, "strokes": 399, "images": 0, "texts": 0, "pdfs": 0},
+}
+
+# Page sizes and papers as ``info --json`` lists them, for the files whose GoodNotes export
+# (TestN.pdf next to the sample) fixes them: Test9 mixes A4 catalogue papers with a Figma
+# PDF, an Excel form and a photo strip; Test6 page 1 is the only ruled page of Test6 .. Test8
+# (docs/goodnotes-v35-binding.md sections 8.3, 8.5 and 9.1).
+A4 = (595.28, 841.89)
+STD = (455.04, 588.45)
+PAGES_EXPECTED: Dict[str, List[Tuple[float, float, str, bool]]] = {
+    "Test6.goodnotes": [(*STD, "lined", True)] + [(*STD, "plain", True)] * 4,
+    "Test7.goodnotes": [(*STD, "plain", True)] * 4,
+    "Test8.goodnotes": [(*STD, "plain", True)] * 4,
+    "Test9.goodnotes": [(*A4, "plain", True), (*A4, "grid", True), (*A4, "grid", True), (*A4, "plain", True),
+                        (1280.0, 905.0, "plain", False), (595.2, 841.68, "plain", False),
+                        (454.91, 143.28, "plain", False)],
+    "Test5.goodnotes": [(*STD, "plain", True), (*STD, "grid", True), (*STD, "grid", True)],
 }
 
 
@@ -269,5 +299,10 @@ def test_info_json_on_every_sample(samples) -> None:
         assert totals["images"] == sum(p["images"] for p in info["pages"]), path.name
         assert totals["texts"] == sum(p["texts"] for p in info["pages"]), path.name
         assert all(isinstance(w, str) and "\n" not in w for w in info["warnings"]), path.name
-        if path.name in INFO_EXPECTED:
-            assert totals == INFO_EXPECTED[path.name], path.name
+        expected = samples.expected_for(path, INFO_EXPECTED)
+        if expected is not None:
+            assert totals == expected, path.name
+        pages = samples.expected_for(path, PAGES_EXPECTED)
+        if pages is not None:
+            listed = [(round(p["width"], 2), round(p["height"], 2), p["paper"], p["builtin_template"]) for p in info["pages"]]
+            assert listed == pages, path.name

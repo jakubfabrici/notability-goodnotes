@@ -1,11 +1,13 @@
 """Unit tests for gnnote.tpl: the generic image codec, the hand-decoded strokes of
 docs/goodnotes-stroke.md sections 2 and 3, byte-exact re-encoding of every stroke in the
-sample notebooks, and the writer recipe of section 8."""
+sample notebooks (with an exact census for the files of :data:`CENSUS_EXPECTED`), and the
+writer recipe of section 8."""
 from __future__ import annotations
 
 import math
 import struct
 import zipfile
+from typing import Dict
 
 import pytest
 
@@ -289,48 +291,75 @@ def test_multi_subpath_ribbon_and_variants(test5):
     assert len(s.arcs) % 7 == 0
 
 
-def _all_images(samples):
-    for path in samples.goodnotes_files():
-        with zipfile.ZipFile(path) as z:
-            for name in z.namelist():
-                if not name.startswith("notes/"):
-                    continue
-                for rec in pb.decode_records(z.read(name)):
-                    for content in pb.get_all(pb.decode_message(rec), 7):
-                        fields = pb.decode_message(content.value)
-                        geo = pb.get(fields, 2)
-                        if geo is not None and applelz4.is_apple_lz4(geo.value):
-                            yield path.name, name, fields, applelz4.decompress(geo.value)
+def _all_images(path):
+    """Yield (member, content fields, decoded TPL bytes) for every LZ4 frame in ``path``."""
+    with zipfile.ZipFile(path) as z:
+        for name in z.namelist():
+            if not name.startswith("notes/"):
+                continue
+            for rec in pb.decode_records(z.read(name)):
+                for content in pb.get_all(pb.decode_message(rec), 7):
+                    fields = pb.decode_message(content.value)
+                    geo = pb.get(fields, 2)
+                    if geo is not None and applelz4.is_apple_lz4(geo.value):
+                        yield name, fields, applelz4.decompress(geo.value)
+
+
+# file -> census of decoded images: flat (of which short = the trailer-less version-1 form),
+# ribbon, pencil and empty headers.  Test6 .. Test9 (schema 25/35) add no format string
+# (docs/goodnotes-v35-strokes.md section 1.1); Test9's 33 short flats are the pasted group.
+CENSUS_EXPECTED: Dict[str, Dict[str, int]] = {
+    "Test4.goodnotes": {"flat": 0, "short": 0, "ribbon": 5, "pencil": 0, "empty": 0},
+    "Test5.goodnotes": {"flat": 13, "short": 7, "ribbon": 27, "pencil": 5, "empty": 1},
+    "Test6.goodnotes": {"flat": 1, "short": 0, "ribbon": 1, "pencil": 12, "empty": 8},
+    "Test7.goodnotes": {"flat": 7, "short": 0, "ribbon": 6, "pencil": 1, "empty": 22},
+    "Test8.goodnotes": {"flat": 1, "short": 0, "ribbon": 0, "pencil": 1, "empty": 8},
+    "Test9.goodnotes": {"flat": 78, "short": 33, "ribbon": 52, "pencil": 21, "empty": 35},
+    "test.goodnotes": {"flat": 0, "short": 0, "ribbon": 1, "pencil": 0, "empty": 1},
+    "test2.goodnotes": {"flat": 0, "short": 0, "ribbon": 1, "pencil": 0, "empty": 0},
+    "test3.goodnotes": {"flat": 0, "short": 0, "ribbon": 2, "pencil": 0, "empty": 0},
+    "ex1.goodnotes": {"flat": 1484, "short": 0, "ribbon": 0, "pencil": 0, "empty": 1323},
+    "ex2.goodnotes": {"flat": 8, "short": 0, "ribbon": 6, "pencil": 3, "empty": 8},
+    "ex3.goodnotes": {"flat": 2455, "short": 0, "ribbon": 0, "pencil": 0, "empty": 285},
+    "record.goodnotes": {"flat": 12, "short": 0, "ribbon": 0, "pencil": 0, "empty": 37},
+}
 
 
 def test_every_sample_stroke_round_trips(samples):
-    counts = {"flat": 0, "ribbon": 0, "pencil": 0, "empty": 0}
-    for _file, _page, fields, raw in _all_images(samples):
-        image = tpl.decode_image(raw)
-        assert image.fmt in tpl.KNOWN_FORMATS
-        assert tpl.encode_image(image) == raw
-        s = tpl.decode(raw)
-        f3 = pb.get(fields, 3)
-        if s is None:
-            counts["empty"] += 1
-            assert not any(isinstance(v, list) and v for v in image.values)
-        elif isinstance(s, tpl.FlatStroke):
-            counts["flat"] += 1
-            assert f3 is None
-            assert tpl.encode_flat(s) == raw
-            assert len(s.polyline()) == 1 + 2 * len(s.quads) and len(s.polyline()) % 2 == 1
-            assert s.flags == [0] + [1] * len(s.quads)
-            assert s.trailer_word == 1 and s.dash == [] and s.version in (1, 2)
-            assert s.width > 0
-            s.cubic_controls()
-        elif isinstance(s, tpl.RibbonStroke):
-            counts["ribbon"] += 1
-            assert pb.varint_value(f3) in (1, 4)
-            assert len(s.points) == sum(len(p) for p in s.subpaths)
-            assert all(r > 0 for _x, _y, r in s.points)
-            assert len(s.arc_flags) * 5 <= len(s.arcs) <= len(s.arc_flags) * 7
-        else:
-            counts["pencil"] += 1
-            assert pb.varint_value(f3) == 5 and pb.varint_value(pb.get(fields, 21)) == 25
-            assert len(s.points) == len(s.attrs) == 1 + 2 * len(s.seeds) + len(s.subpaths) - 1
-    assert counts == {"flat": 3972, "ribbon": 42, "pencil": 8, "empty": 1655}
+    for path in samples.goodnotes_files():
+        counts = {"flat": 0, "short": 0, "ribbon": 0, "pencil": 0, "empty": 0}
+        for _page, fields, raw in _all_images(path):
+            image = tpl.decode_image(raw)
+            assert image.fmt in tpl.KNOWN_FORMATS, path.name
+            assert tpl.encode_image(image) == raw
+            s = tpl.decode(raw)
+            f3 = pb.get(fields, 3)
+            if s is None:
+                counts["empty"] += 1
+                assert not any(isinstance(v, list) and v for v in image.values)
+            elif isinstance(s, tpl.FlatStroke):
+                counts["flat"] += 1
+                counts["short"] += not s.has_trailer
+                assert f3 is None
+                assert tpl.encode_flat(s) == raw
+                assert len(s.polyline()) == 1 + 2 * len(s.quads) and len(s.polyline()) % 2 == 1
+                assert s.flags == [0] + [1] * len(s.quads)
+                assert s.trailer_word == 1 and s.dash == [] and s.version in (1, 2)
+                assert s.has_trailer == (s.version == 2)
+                assert s.width > 0
+                s.cubic_controls()
+            elif isinstance(s, tpl.RibbonStroke):
+                counts["ribbon"] += 1
+                assert pb.varint_value(f3) in (1, 4)
+                assert (s.width is not None) == (pb.varint_value(f3) == 4)
+                assert len(s.points) == sum(len(p) for p in s.subpaths)
+                assert all(r > 0 for _x, _y, r in s.points)
+                assert len(s.arc_flags) * 5 <= len(s.arcs) <= len(s.arc_flags) * 7
+            else:
+                counts["pencil"] += 1
+                assert pb.varint_value(f3) == 5 and pb.varint_value(pb.get(fields, 21)) == 25
+                assert len(s.points) == len(s.attrs) == 1 + 2 * len(s.seeds) + len(s.subpaths) - 1
+        assert sum(counts.values()) - counts["short"] >= 1, path.name
+        expected = samples.expected_for(path, CENSUS_EXPECTED)
+        if expected is not None:
+            assert counts == expected, path.name

@@ -13,8 +13,12 @@ ZIP members, in this order, all deflated::
     index.events.pb        the event log (below)
     thumbnail.jpg          a small white baseline JPEG (constants.THUMBNAIL_JPEG)
     index.attachments.pb   one record {#1 A, #2 "attachments/" + A} per attachment
-    attachments/<A>        paper / user PDFs and raster images, bytes as-is
+    attachments/<A>        paper / user PDFs, raster images and PDF stickers, bytes as-is
     schema.pb              08 18  ({#1 24})
+
+``document.info.pb`` (0 bytes in the one schema-35 sample, absent from the schema-25 ones) is
+not written: the output stays a schema-24 file in every shape (``goodnotes-v35-binding.md``
+section 12), and the files of that generation do not have it.
 
 Identifiers: every UUID is an uppercase 36-character UUID4 string.  A page has two: the
 page entity ``P`` (its last hex digit is 0-E) and its notes layer ``N`` = ``P`` with the
@@ -30,7 +34,7 @@ Event log (record stream, each record ``{#1 entity UUID, #<type> {body}}``), in 
   #6 {"P", clock}, #7 {constant UUID, clock}, #9 "auto", #10 ts, #11 uuid, #13 dev,
   #14 seq, #17 "", #18 "", #19 {#2 clock}, #20 24``.
 * ``#6`` per attachment: ``#1 A, #2 A, #5 byte size, #6 D, #10, #11, #12 ({#1 1, #2 1} for a
-  PDF, "" for a raster), #14 dev, #15 seq, #16 24``.
+  paper / background PDF, "" for a raster or a PDF sticker), #14 dev, #15 seq, #16 24``.
 * ``#2`` per template (one per distinct (PDF, page)): ``#1 D, #2 T, #4 A, #5 1-based PDF page,
   #6 1, #8 {#1 f32 canvas W, #2 f32 canvas H}, #9 name, #10, #11, #12 {#2 clock},
   #13 {#2 clock}, #15 dev, #16 seq, #17 {#1 1, #2 clock}, #19 {#2 clock}, #21 24`` (the blank
@@ -45,9 +49,9 @@ Event log (record stream, each record ``{#1 entity UUID, #<type> {body}}``), in 
 * ``#102`` per non-empty page: ``#1 N, #10, #11, #13, #14, #15 24, #16 D``.
 
 Page content (``notes/<N>``): a record stream of (metadata, content) pairs in z-order
-(images, then strokes, then text boxes).  Metadata = ``{#1 E, #2 clock, [#4 A for images],
-#8 dev, #9 element counter, #14 5381, #16 24}``.  Content records have exactly one top-level
-field whose number is the kind:
+(images, then strokes with their fills, then text boxes).  Metadata = ``{#1 E, #2 clock,
+[#4 A for images], #8 dev, #9 element counter, #14 5381, #16 24}``.  Content records have
+exactly one top-level field whose number is the kind:
 
 * stroke ``#7 {#1 E, #2 Apple-LZ4 frame of a flat TPL image, #4 colour, [#5 1 highlighter],
   #6 "", #7 {#1 {#1 draw index, #2 nonce}}, #9 "", #15 clock, #20 "", #21 24}``.  ``#3`` is
@@ -58,13 +62,33 @@ field whose number is the kind:
   segment midpoint; cubic Bezier input is approximated by ``C = (3(c1 + c2) - P0 - P1) / 4``,
   halving the cubic while the maximum deviation exceeds 0.3 canvas units (depth <= 4).  A
   single point becomes a 0.3-unit dash.
+* shape fill ``#9 {#1 E, #2 bbox rect, #3 {#1 {#1 1, #2 nonce}}, #4 {#1 {repeated #1 point}},
+  #5 parent stroke UUID, #6 "", #7 RGBA, #15 {#2 nonce}, #18 24}`` for a model stroke with
+  ``kind == "fill"`` (``goodnotes-v35-elements.md`` section 1): ``#4`` is the fill's outline
+  as a closed polygon (first point repeated last), ``#7`` its colour with alpha (0.1 in
+  GoodNotes' own files), ``#5`` the element UUID of its parent: the ink stroke right before
+  it in ``Page.strokes`` or, failing that, the one right after it (GoodNotes stores both
+  orders), provided that stroke's bounding box matches the outline's; the fill record always
+  follows its parent in the stream.  GoodNotes writes a fill only for a recognised auto-shape
+  (a stroke with ``#7.#9`` geometry); whether it accepts one whose parent is a plain ink
+  stroke, as written here, is unverified.  Fills with no matching neighbour are skipped with
+  one warning.  The metadata clock is the text-box style ``{#2 nonce}`` (no version), as in
+  all 13 sample fills.
 * image ``#1 {#1 E, #2 rect(x, y, w, h), #3 rect(x + w/2, y + h/2, w, h), #4 A,
-  #5 {#1 {#1 1, #2 nonce}}, #15 clock, #18 24}`` with ``rect = {#1 {f32 x, f32 y},
-  #2 {f32 w, f32 h}}`` in canvas units; the raster is an attachment.
+  #5 {#1 {#1 1, #2 nonce}}, [#6 kind], #15 clock, #18 24}`` with ``rect = {#1 {f32 x, f32 y},
+  #2 {f32 w, f32 h}}`` in canvas units; the raster is an attachment.  ``#6`` is 1 for a JPEG,
+  3 for a PDF sticker (``Image.fmt == "pdf"``: the one-page PDF is carried as an attachment
+  and ``#2`` is its box) and absent for a PNG, as in GoodNotes' files.  ``Image.rotation``
+  has no verified field (``#3.#3`` was never seen non-zero): a JPEG whose EXIF orientation
+  prescribes the same quarter-turn is written unchanged with ``#2`` = the displayed (rotated)
+  box, exactly as GoodNotes stores EXIF-rotated photos; every other rotation is dropped with a
+  warning.
 * text ``#8 {#1 E, #2 outer rect, #3 text frame (outer inset by 10), #4 {#1 1.0, #4 1.0},
   #5 {#1 {#1 1, #2 nonce}}, #6 RTF, #7 {1, 1, 1}, #9 {1, 1, 1}, #10 f32 10.0, #15 {#2 nonce},
   #18 {#2 f32 5.0}, #19 {#4 f32 0.2}, #20 ".tb-0", #21 "", #27 24}`` with the RTF from
-  ``gnnote.rtf.make_rtf`` (font sizes in canvas units).
+  ``gnnote.rtf.make_rtf`` (font sizes in canvas units); ``TextBox.align`` "center" / "right"
+  adds ``\\qc`` / ``\\qr`` to the paragraph header, ``TextBox.rotation`` is dropped with a
+  warning (an RTF box has no rotation field).
 
 Paper: a page with a ``PdfBackground`` attaches ``doc.pdfs[pdf_id]`` once per ``pdf_id`` and
 binds ``#2.#5 = page_index + 1`` (shared multi-page attachment); the canvas size is that
@@ -86,7 +110,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .. import applelz4, pdfutil, rtf, tpl
 from .. import protobuf as pb
-from ..model import RGBA, Document, Image, Page, Stroke, TextBox, TextRun
+from ..model import RGBA, Document, Image, Page, Point, Stroke, TextBox, TextRun
+from ..notability.writer import exif_rotation, jpeg_exif_orientation
 from . import constants as C
 
 XY = Tuple[float, float]
@@ -96,6 +121,8 @@ QUAD_TOLERANCE = 0.3  # canvas units; max deviation of a quadratic from its cubi
 QUAD_MAX_DEPTH = 4  # at most 2**4 quads per cubic segment
 DASH_LENGTH = 0.3  # canvas units; a single point becomes this long
 DEFAULT_PAGE_SIZE = (455.04, 588.45)  # GoodNotes "standard" paper, used for an empty document
+FILL_PARENT_TOLERANCE = 2.0  # pt added to 2 % of the parent's size when matching a fill to its parent
+RTF_ALIGNMENT = {"center": "\\qc", "right": "\\qr"}  # paragraph alignment control words
 _SQRT3_36 = math.sqrt(3.0) / 36.0
 
 
@@ -194,9 +221,33 @@ class _Context:
     raster_attachments: Dict[str, _Attachment] = field(default_factory=dict)
     pdf_infos: Dict[str, Optional[pdfutil.PdfInfo]] = field(default_factory=dict)
     template_cache: Dict[Tuple[Any, ...], _Template] = field(default_factory=dict)
+    counts: Dict[str, int] = field(default_factory=dict)  # lossy steps reported once with a count
 
     def warn(self, message: str) -> None:
         self.doc.warn(message)
+
+    def count(self, key: str) -> None:
+        self.counts[key] = self.counts.get(key, 0) + 1
+
+    def flush_counts(self) -> None:
+        """Emit the counted warnings (one line each, with the document-wide count)."""
+        messages = {
+            "fill_orphan": "{n} shape fills were skipped (no neighbouring stroke matches them; "
+                           "GoodNotes binds a fill to the stroke it fills)",
+            "fill_empty": "{n} shape fills without an outline were skipped",
+            "fill_multi": "{n} shape fills had several polygons; only the first one was written",
+            "image_exif": "{n} rotated photos were written unrotated with their displayed box; "
+                          "GoodNotes turns them by their EXIF orientation (image rotation fields "
+                          "are unverified)",
+            "image_rotation": "{n} image rotations were dropped (GoodNotes has no verified image "
+                              "rotation field)",
+            "text_rotation": "{n} text box rotations were dropped (GoodNotes RTF text boxes "
+                             "cannot be rotated)",
+        }
+        for key, template in messages.items():
+            n = self.counts.get(key, 0)
+            if n:
+                self.warn(template.format(n=n))
 
 
 def _point(x: float, y: float) -> bytes:
@@ -332,7 +383,9 @@ def _metadata_record(ctx: _Context, element: str, clock: bytes, attachment: Opti
     return fields
 
 
-def _stroke_records(ctx: _Context, stroke: Stroke, sx: float, sy: float, draw_index: int) -> List[bytes]:
+def _stroke_records(ctx: _Context, stroke: Stroke, sx: float, sy: float, draw_index: int
+                    ) -> Tuple[str, List[bytes]]:
+    """``(element UUID, [metadata, content])`` of one ink stroke."""
     width_pt = _stroke_width_pt(stroke, ctx)
     if stroke.pen == "pencil":
         ctx.warn("Pencil strokes are written as GoodNotes ball-pen strokes.")
@@ -354,7 +407,7 @@ def _stroke_records(ctx: _Context, stroke: Stroke, sx: float, sy: float, draw_in
              + pb.field_message(15, clock)
              + pb.field_bytes(20, b"")
              + pb.field_varint(21, C.SCHEMA_VERSION))
-    return [_metadata_record(ctx, element, clock), pb.field_message(C.CONTENT_STROKE, body)]
+    return element, [_metadata_record(ctx, element, clock), pb.field_message(C.CONTENT_STROKE, body)]
 
 
 def _raster_attachment(ctx: _Context, data: bytes) -> _Attachment:
@@ -367,26 +420,132 @@ def _raster_attachment(ctx: _Context, data: bytes) -> _Attachment:
     return att
 
 
+def _image_kind(image: Image) -> Optional[int]:
+    """``#1.#6`` for the image: 1 JPEG, 3 PDF sticker, ``None`` (absent) for a PNG.
+
+    The bytes decide; ``Image.fmt`` is consulted only when they are not PNG, JPEG or PDF.
+    """
+    data = image.data
+    if data.startswith(b"\xff\xd8"):
+        return C.IMAGE_KIND_PHOTO
+    if data.startswith(b"%PDF-"):
+        return C.IMAGE_KIND_PDF
+    if data.startswith(b"\x89PNG"):
+        return None
+    fmt = (image.fmt or "").lower()
+    return C.IMAGE_KIND_PDF if fmt == "pdf" else C.IMAGE_KIND_PHOTO if fmt in ("jpeg", "jpg") else None
+
+
+def displayed_box(image: Image, ctx: Optional[_Context] = None) -> Tuple[float, float, float, float]:
+    """``(x, y, w, h)`` in pt of the box GoodNotes should hold for ``image``.
+
+    GoodNotes has no verified rotation field for images; it does, however, turn a JPEG by its
+    EXIF orientation and stores the *displayed* (rotated) size in ``#2``.  So a JPEG whose
+    EXIF orientation prescribes the same quarter-turn as ``image.rotation`` keeps its bytes
+    and gets the box rotated about its centre; any other rotation is dropped (native box).
+    ``ctx`` receives the counted warnings.
+    """
+    x, y, w, h = float(image.x), float(image.y), float(image.w), float(image.h)
+    rotation = float(image.rotation or 0.0) % 360.0
+    if rotation < 1e-6 or 360.0 - rotation < 1e-6:
+        return x, y, w, h
+    exif = exif_rotation(jpeg_exif_orientation(image.data))
+    if exif is not None and abs(exif - rotation) < 1e-6 and exif != 0.0:
+        if ctx is not None:
+            ctx.count("image_exif")
+        if exif in (90.0, 270.0):
+            cx, cy = x + w / 2.0, y + h / 2.0
+            return cx - h / 2.0, cy - w / 2.0, h, w
+        return x, y, w, h  # 180 degrees: same box
+    if ctx is not None:
+        ctx.count("image_rotation")
+    return x, y, w, h
+
+
 def _image_records(ctx: _Context, image: Image, sx: float, sy: float) -> List[bytes]:
     if not image.data:
         ctx.warn("An image without data was skipped.")
         return []
-    if image.rotation and abs(float(image.rotation)) % 360.0 > 1e-6:
-        ctx.warn("Image rotation is not representable in GoodNotes and was dropped.")
-    if not (image.data.startswith(b"\x89PNG") or image.data.startswith(b"\xff\xd8")):
-        ctx.warn("An image is neither PNG nor JPEG; GoodNotes may not display it.")
+    kind = _image_kind(image)
+    if kind == C.IMAGE_KIND_PDF and not image.data.startswith(b"%PDF-"):
+        ctx.warn("An image declared as PDF does not hold a PDF; GoodNotes may not display it.")
+    elif kind is None and not image.data.startswith(b"\x89PNG"):
+        ctx.warn("An image is neither PNG, JPEG nor PDF; GoodNotes may not display it.")
     att = _raster_attachment(ctx, image.data)
-    x, y, w, h = image.x * sx, image.y * sy, image.w * sx, image.h * sy
+    bx, by, bw, bh = displayed_box(image, ctx)
+    x, y, w, h = bx * sx, by * sy, bw * sx, bh * sy
     element = ctx.ids.uuid()
     clock = ctx.ids.clock(C.ELEMENT_CLOCK_VERSION)
     body = (pb.field_bytes(1, element)
             + pb.field_message(2, _rect(x, y, w, h))
             + pb.field_message(3, _rect(x + w / 2.0, y + h / 2.0, w, h))
             + pb.field_bytes(4, att.uuid)
-            + pb.field_message(5, pb.field_message(1, ctx.ids.clock(1)))
+            + pb.field_message(5, pb.field_message(1, ctx.ids.clock(1))))
+    if kind is not None:
+        body += pb.field_varint(6, kind)
+    body += pb.field_message(15, clock) + pb.field_varint(18, C.SCHEMA_VERSION)
+    return [_metadata_record(ctx, element, clock, att.uuid), pb.field_message(C.CONTENT_IMAGE, body)]
+
+
+# ---- shape fills
+
+
+def _fill_polygon(stroke: Stroke) -> List[Point]:
+    """The fill's first outline polygon (falling back to ``points``), closed, finite, >= 3 corners."""
+    polygons = [poly for poly in (stroke.outline or []) if poly] or ([stroke.points] if stroke.points else [])
+    if not polygons:
+        return []
+    pts = [p for p in polygons[0] if math.isfinite(p.x) and math.isfinite(p.y)]
+    deduped: List[Point] = []
+    for p in pts:
+        if not deduped or (p.x, p.y) != (deduped[-1].x, deduped[-1].y):
+            deduped.append(p)
+    if len(deduped) >= 2 and (deduped[0].x, deduped[0].y) == (deduped[-1].x, deduped[-1].y):
+        deduped.pop()
+    if len(deduped) < 3:
+        return []
+    return deduped + [deduped[0]]
+
+
+def fill_matches_parent(polygon: Sequence[Point], parent: Stroke) -> bool:
+    """True when ``polygon`` (pt) lies on the bounding box of ``parent`` (the stroke it fills).
+
+    GoodNotes' fill geometry is a copy of the parent's auto-shape geometry, so the two bounding
+    boxes coincide; ``FILL_PARENT_TOLERANCE`` pt plus 2 % of the parent's size absorb the
+    sampling and width differences introduced by the readers.
+    """
+    if parent.kind == "fill" or not parent.points or not polygon:
+        return False
+    px0, py0, px1, py1 = parent.bbox()
+    fx0 = min(p.x for p in polygon)
+    fy0 = min(p.y for p in polygon)
+    fx1 = max(p.x for p in polygon)
+    fy1 = max(p.y for p in polygon)
+    tol = FILL_PARENT_TOLERANCE + 0.02 * max(px1 - px0, py1 - py0)
+    return (abs(fx0 - px0) <= tol and abs(fy0 - py0) <= tol
+            and abs(fx1 - px1) <= tol and abs(fy1 - py1) <= tol)
+
+
+def _fill_records(ctx: _Context, polygon: Sequence[Point], fill: Stroke, parent_uuid: str,
+                  sx: float, sy: float) -> List[bytes]:
+    """The (metadata, ``#9``) pair of a shape fill whose parent stroke is ``parent_uuid``."""
+    pts = [(p.x * sx, p.y * sy) for p in polygon]
+    xs = [x for x, _y in pts]
+    ys = [y for _x, y in pts]
+    colour = tuple(float(c) for c in fill.color) + (C.FILL_ALPHA,) * (4 - len(fill.color))
+    element = ctx.ids.uuid()
+    clock = ctx.ids.versionless_clock()
+    geometry = pb.field_message(1, b"".join(pb.field_message(1, _point(x, y)) for x, y in pts))
+    body = (pb.field_bytes(1, element)
+            + pb.field_message(2, _rect(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)))
+            + pb.field_message(3, pb.field_message(1, ctx.ids.clock(C.FILL_CLOCK_VERSION)))
+            + pb.field_message(4, geometry)
+            + pb.field_bytes(5, parent_uuid)
+            + pb.field_bytes(6, b"")
+            + pb.field_message(7, _colour(colour))  # type: ignore[arg-type]
             + pb.field_message(15, clock)
             + pb.field_varint(18, C.SCHEMA_VERSION))
-    return [_metadata_record(ctx, element, clock, att.uuid), pb.field_message(C.CONTENT_IMAGE, body)]
+    return [_metadata_record(ctx, element, clock), pb.field_message(C.CONTENT_FILL, body)]
 
 
 def _text_records(ctx: _Context, box: TextBox, sx: float, sy: float) -> List[bytes]:
@@ -401,6 +560,12 @@ def _text_records(ctx: _Context, box: TextBox, sx: float, sy: float) -> List[byt
     half_points = max(1, int(round(2.0 * size_canvas)))
     colour = tuple(float(c) for c in box.color) + (1.0,) * (4 - len(box.color))
     payload = rtf.make_rtf(text, runs, size_half_points=half_points, color=colour)  # type: ignore[arg-type]
+    control = RTF_ALIGNMENT.get((box.align or "left").lower())
+    if control is not None:
+        # Cocoa puts the alignment after the tab stops of \pard and before \pardirnatural
+        payload = payload.replace(b"\\pardirnatural", control.encode("ascii") + b"\\pardirnatural", 1)
+    if box.rotation and abs(float(box.rotation)) % 360.0 > 1e-6:
+        ctx.count("text_rotation")
     max_half = max([half_points] + [int(round(2.0 * r.size)) for r in runs if r.size])
     lines = text.count("\n") + 1
     fx, fy = box.x * sx, box.y * sy
@@ -442,16 +607,50 @@ def _page_content(ctx: _Context, out: _PageOut) -> bytes:
         except (ValueError, TypeError) as exc:
             ctx.warn(f"Page {out.index + 1}: an image was skipped ({exc}).")
     draw_index = 0
+    previous: Optional[Tuple[Stroke, str]] = None  # the last ink stroke written and its UUID
+    pending: Optional[Tuple[List[Point], Stroke]] = None  # a fill waiting for the next stroke
+
+    def write_fill(polygon: List[Point], fill: Stroke, parent_uuid: str) -> None:
+        if fill.outline and len([poly for poly in fill.outline if poly]) > 1:
+            ctx.count("fill_multi")
+        records.extend(_fill_records(ctx, polygon, fill, parent_uuid, sx, sy))
+
     for stroke in page.strokes:
+        if stroke.kind == "fill":
+            polygon = _fill_polygon(stroke)
+            if not polygon:
+                ctx.count("fill_empty")
+                continue
+            if previous is not None and fill_matches_parent(polygon, previous[0]):
+                write_fill(polygon, stroke, previous[1])
+                continue
+            # GoodNotes also stores fills before their parent: keep it for the next stroke
+            if pending is not None:
+                ctx.count("fill_orphan")
+            pending = (polygon, stroke)
+            continue
         if not stroke.points:
             if stroke.outline:
                 ctx.warn("A filled-shape stroke without centre-line points was skipped.")
             continue
         draw_index += 1
         try:
-            records += _stroke_records(ctx, stroke, sx, sy, draw_index)
+            element, stroke_records = _stroke_records(ctx, stroke, sx, sy, draw_index)
         except (ValueError, TypeError) as exc:
             ctx.warn(f"Page {out.index + 1}: a stroke was skipped ({exc}).")
+            previous = None
+            continue
+        records += stroke_records
+        previous = (stroke, element)
+        if pending is not None:
+            polygon, fill = pending
+            pending = None
+            if fill_matches_parent(polygon, stroke):
+                write_fill(polygon, fill, element)
+            else:
+                ctx.count("fill_orphan")
+    if pending is not None:
+        ctx.count("fill_orphan")
     for box in page.texts:
         try:
             records += _text_records(ctx, box, sx, sy)
@@ -686,6 +885,7 @@ def build_members(doc: Document, options: Any = None) -> List[Tuple[str, bytes]]
         outs.append(_PageOut(index, page, entity, notes, tmpl))
     for out in outs:
         out.content = _page_content(ctx, out)
+    ctx.flush_counts()
 
     doc_uuid = ids.uuid()
     members: List[Tuple[str, bytes]] = [(C.MEMBER_SEARCH_INDEX, b"")]

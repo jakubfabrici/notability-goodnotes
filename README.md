@@ -118,11 +118,14 @@ python3 -m pytest -q
 ```
 
 Sample files and oracle parsers come from third-party repositories and are never vendored.
-The test fixture clones them shallowly into `tests/.samples/` on first use, or uses the
-directory named by `GNNOTE_SAMPLES` (one sub-directory per repository). Tests that need a
-repository that is unavailable are skipped; `GNNOTE_OFFLINE=1` disables cloning. Oracle
-parsers (goodparse, parser-for-goodnotes) run in a subprocess with their own `PYTHONPATH`
-and are never imported into the package; parser-for-goodnotes needs `numpy`.
+Each repository is pinned to one commit (`REPOS` in `tests/conftest.py`); the test fixture
+checks that commit out into `tests/.samples/` on first use, or uses the directory named by
+`GNNOTE_SAMPLES` (one sub-directory per repository, left untouched even when it sits at
+another commit, in which case the exact per-file expectations are withheld and only the
+invariants run; the pytest header reports it). Tests that need a repository that is
+unavailable are skipped; `GNNOTE_OFFLINE=1` disables cloning. Oracle parsers (goodparse,
+parser-for-goodnotes) run in a subprocess with their own `PYTHONPATH` and are never
+imported into the package; parser-for-goodnotes needs `numpy`.
 
 Browser end-to-end test (Playwright, see `tests/e2e/README.md`):
 

@@ -1,11 +1,18 @@
 """Unit tests for gnnote.applelz4: vectors from docs/ecosystem.md section 3, block grammar
 corner cases, both compression levels, python-lz4 cross-checks (skipped when absent) and
-every stroke frame of every sample notebook."""
+every stroke frame of every sample notebook.
+
+The sample walk asserts invariants on every frame of every ``.goodnotes`` file the fixture
+finds and pins exact counts only for the files of :data:`FRAME_EXPECTED` (the goodparse and
+parser-for-goodnotes samples at their pinned commits), so an unknown sample cannot break it.
+"""
 from __future__ import annotations
 
 import random
 import struct
 import zipfile
+from pathlib import Path
+from typing import Dict, Iterator, List, Tuple
 
 import pytest
 
@@ -174,8 +181,28 @@ def test_python_lz4_blocks_decode_with_our_decoder():
 
 # --------------------------------------------------------------------------- samples
 
+# file -> (frames, frames with several bv41 blocks, frames with a bv4- stored block,
+#          largest decoded TPL image in bytes).  GoodNotes splits at 32 KiB: the 100 212-byte
+#          ribbon stroke of Test6 and the 133 538-byte one of Test7 are the multi-block
+#          frames (docs/goodnotes-v35-strokes.md section 2), Test9 holds the one stored block.
+FRAME_EXPECTED: Dict[str, Tuple[int, int, int, int]] = {
+    "Test4.goodnotes": (5, 0, 0, 3798),
+    "Test5.goodnotes": (46, 0, 0, 9745),
+    "Test6.goodnotes": (22, 1, 0, 100212),
+    "Test7.goodnotes": (36, 1, 0, 133538),
+    "Test8.goodnotes": (10, 0, 0, 1793),
+    "Test9.goodnotes": (186, 0, 1, 12823),
+    "test.goodnotes": (2, 0, 0, 986),
+    "test2.goodnotes": (1, 0, 0, 192),
+    "test3.goodnotes": (2, 0, 0, 192),
+    "ex1.goodnotes": (2807, 0, 0, 756),
+    "ex2.goodnotes": (25, 0, 0, 30520),
+    "ex3.goodnotes": (2740, 0, 0, 1008),
+    "record.goodnotes": (49, 0, 0, 666),
+}
 
-def _stroke_frames(path):
+
+def _stroke_frames(path: Path) -> Iterator[Tuple[str, bytes]]:
     with zipfile.ZipFile(path) as z:
         for name in z.namelist():
             if not name.startswith("notes/"):
@@ -187,30 +214,84 @@ def _stroke_frames(path):
                         yield name, geo.value
 
 
+def _walk_frame(frame: bytes) -> List[Tuple[bytes, int, bytes]]:
+    """Independent parse of a frame into ``(magic, decoded_size, payload)`` blocks; the
+    terminator must be the last four bytes."""
+    blocks: List[Tuple[bytes, int, bytes]] = []
+    pos = 0
+    while True:
+        magic = frame[pos:pos + 4]
+        if magic == b"bv4$":
+            assert pos + 4 == len(frame), "bytes after bv4$"
+            return blocks
+        if magic == b"bv41":
+            dsize, csize = struct.unpack_from("<II", frame, pos + 4)
+            blocks.append((magic, dsize, frame[pos + 12:pos + 12 + csize]))
+            pos += 12 + csize
+        elif magic == b"bv4-":
+            (size,) = struct.unpack_from("<I", frame, pos + 4)
+            blocks.append((magic, size, frame[pos + 8:pos + 8 + size]))
+            pos += 8 + size
+        else:
+            raise AssertionError(f"unexpected block magic {magic!r}")
+
+
+def _check_frame(frame: bytes, index: int) -> bytes:
+    """Invariants of one GoodNotes-written frame; returns the decoded image."""
+    blocks = _walk_frame(frame)
+    assert blocks, "frame without a data block"
+    assert [b[:2] for b in applelz4.split_blocks(frame)] == [(m, d) for m, d, _p in blocks] + [(b"bv4$", 0)]
+    raw = applelz4.decompress(frame)
+    assert len(raw) == sum(d for _m, d, _p in blocks)
+    assert raw[:4] == b"tpl\x00"
+    assert struct.unpack_from("<I", raw, 4)[0] == len(raw)
+    # every block decodes on its own as well as with the previous output as history
+    offset = 0
+    for magic, dsize, payload in blocks:
+        if magic == b"bv4-":
+            assert payload == raw[offset:offset + dsize]
+        else:
+            assert bytes(applelz4.lz4_block_decompress(payload, expected_size=dsize)) == raw[offset:offset + dsize]
+            if lz4_block is not None:
+                assert lz4_block.decompress(payload, uncompressed_size=dsize) == raw[offset:offset + dsize]
+                assert lz4_block.decompress(payload, uncompressed_size=dsize, dict=raw[:offset]) == raw[offset:offset + dsize]
+        offset += dsize
+    # re-framing with our writer round-trips and uses GoodNotes' block size
+    packed = applelz4.compress(raw)
+    assert applelz4.decompress(packed) == raw
+    assert len(applelz4.split_blocks(packed)) - 1 == max(1, -(-len(raw) // applelz4.BLOCK_SIZE))
+    if index % 25 == 0 or len(blocks) > 1 or blocks[0][0] == b"bv4-":
+        packed = applelz4.compress(raw, level=1)
+        assert applelz4.decompress(packed) == raw
+        if lz4_block is not None:
+            offset = 0
+            for _m, dsize, payload in _walk_frame(packed):
+                assert lz4_block.decompress(payload, uncompressed_size=dsize) == raw[offset:offset + dsize]
+                offset += dsize
+    return raw
+
+
 def test_every_sample_frame_decodes_and_reframes(samples):
-    count = 0
-    largest = (0, b"")
     for path in samples.goodnotes_files():
-        for _name, frame in _stroke_frames(path):
+        count = multi = stored = max_block = 0
+        largest = (0, b"")
+        for index, (_name, frame) in enumerate(_stroke_frames(path)):
+            raw = _check_frame(frame, index)
             count += 1
-            blocks = applelz4.split_blocks(frame)
-            assert [b[0] for b in blocks] == [b"bv41", b"bv4$"]
-            assert 12 + blocks[0][2] + 4 == len(frame)  # nothing after bv4$
-            raw = applelz4.decompress(frame)
-            assert len(raw) == blocks[0][1]
-            assert raw[:4] == b"tpl\x00"
-            assert struct.unpack_from("<I", raw, 4)[0] == len(raw)
-            assert applelz4.decompress(applelz4.compress(raw)) == raw
-            if count % 25 == 0:
-                assert applelz4.decompress(applelz4.compress(raw, level=1)) == raw
+            blocks = _walk_frame(frame)
+            multi += sum(1 for b in blocks if b[0] == b"bv41") > 1
+            stored += any(b[0] == b"bv4-" for b in blocks)
+            max_block = max(max_block, *(d for _m, d, _p in blocks))
             if len(raw) > largest[0]:
                 largest = (len(raw), frame)
-    assert count == 5677
-    assert largest[0] == 30520
-    raw = applelz4.decompress(largest[1])
-    packed = applelz4.compress(raw, level=1)
-    assert applelz4.decompress(packed) == raw
-    assert len(packed) < len(raw)
-    if lz4_block is not None:
-        assert lz4_block.decompress(largest[1][12:-4], uncompressed_size=30520) == raw
-        assert lz4_block.decompress(packed[12:-4], uncompressed_size=30520) == raw
+        assert count >= 1, path.name
+        expected = samples.expected_for(path, FRAME_EXPECTED)
+        if expected is not None:
+            assert (count, multi, stored, largest[0]) == expected, path.name
+            assert max_block <= applelz4.BLOCK_SIZE, path.name  # GoodNotes 2026 splits at 32 KiB
+        # the largest image of every file also survives real compression
+        raw = applelz4.decompress(largest[1])
+        packed = applelz4.compress(raw, level=1)
+        assert applelz4.decompress(packed) == raw
+        if len(raw) > 512:
+            assert len(packed) < len(raw), path.name

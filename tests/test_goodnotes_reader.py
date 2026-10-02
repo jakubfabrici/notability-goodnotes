@@ -75,7 +75,9 @@ def oracle_pages(samples, path: Path) -> List[dict]:
 
 def element_walk(data: bytes, member: str) -> List[dict]:
     """Independent walk of one ``notes/`` member: one entry per non-empty ink element in record
-    order with the number of sub-strokes the reader must produce for it."""
+    order with the number of sub-strokes the reader must produce for it, plus the shape fills
+    (kind #9) and whether parser-for-goodnotes can see the element (it skips stored ``bv4-``
+    frames and discards tiny strokes by its own heuristics)."""
     z = zipfile.ZipFile(io.BytesIO(data))
     records = protobuf.decode_records(z.read(member))
     out: List[dict] = []
@@ -83,16 +85,23 @@ def element_walk(data: bytes, member: str) -> List[dict]:
     for rec in records:
         fields = protobuf.decode_message(rec)
         f1 = protobuf.get(fields, 1)
-        if f1 is not None and f1.wire_type == protobuf.WIRE_LEN and len(f1.value) == 36 and b"-" in f1.value:
+        if (f1 is not None and f1.wire_type == protobuf.WIRE_LEN and len(f1.value) == 36 and b"-" in f1.value
+                and any(f.number in (8, 9, 16) and f.wire_type == protobuf.WIRE_VARINT for f in fields)):
             tombstone = protobuf.get(fields, 3) is not None and protobuf.get(fields, 3).value == 1
             continue
-        if len(fields) != 1 or fields[0].number != 7:
+        if len(fields) != 1 or fields[0].number not in (7, 9):
             tombstone = False
             continue
         body = protobuf.decode_message(fields[0].value)
         if tombstone:
             tombstone = False
             continue
+        if fields[0].number == 9:
+            f14 = protobuf.get(body, 14)
+            if f14 is None or f14.value != 1:
+                out.append({"kind": "fill", "k": 1, "parent": bytes(protobuf.get(body, 5).value).decode().upper()})
+            continue
+        uuid = bytes(protobuf.get(body, 1).value).decode()
         colour = protobuf.message_value(protobuf.get(body, 4)) if protobuf.get(body, 4) else []
         rgba = [0.0, 0.0, 0.0, 0.0]
         for f in colour:
@@ -110,51 +119,175 @@ def element_walk(data: bytes, member: str) -> List[dict]:
         if f9 is not None and f9.value:
             shape = protobuf.decode_message(f9.value)
             if any(f.number in (1, 2, 3, 4) for f in shape):
-                out.append({"kind": "shape", "k": 1, "rgba": rgba})
+                out.append({"kind": "shape", "k": 1, "rgba": rgba, "uuid": uuid})
                 continue
-        geo = tpl.decode(applelz4.decompress(protobuf.get(body, 2).value))
+        frame = bytes(protobuf.get(body, 2).value)
+        geo = tpl.decode(applelz4.decompress(frame))
         if geo is None:
             continue
         if isinstance(geo, tpl.FlatStroke):
             k = geo.effective_flags().count(0)
             first = (geo.start[0] + off[0], geo.start[1] + off[1])
             fmt = "flat"
+            n_points = 1 + len(geo.quads)
         elif isinstance(geo, tpl.RibbonStroke):
             k = len(geo.subpaths)
             first = (geo.points[0][0] + off[0], geo.points[0][1] + off[1])
             fmt = "ribbon"
+            n_points = len(geo.points)
         else:
             k = len(geo.subpaths)
             first = (geo.points[0][0] + off[0], geo.points[0][1] + off[1])
             fmt = "pencil"
-        out.append({"kind": "ink", "k": k, "rgba": rgba, "first": first, "fmt": fmt})
+            n_points = len(geo.points)
+        out.append({"kind": "ink", "k": k, "rgba": rgba, "first": first, "fmt": fmt, "uuid": uuid,
+                    "oracle_visible": b"bv41" in frame and n_points > 3})
+    return _with_fills_after_parents(out)
+
+
+def _with_fills_after_parents(elements: List[dict]) -> List[dict]:
+    """Stream order with every live fill moved right after its outline element (the reader's
+    placement rule); a fill whose outline is not on the page is dropped."""
+    fills = [e for e in elements if e["kind"] == "fill"]
+    out: List[dict] = []
+    for e in elements:
+        if e["kind"] == "fill":
+            continue
+        out.append(e)
+        out += [f for f in fills if f["parent"] == e["uuid"].upper()]
     return out
 
 
 # --------------------------------------------------------------------------- real samples
 
+# Exact expectations for the files we know (goodparse: Test4-Test9, test, test2, test3;
+# parser-for-goodnotes: ex1, ex2, ex3, record).  "strokes" counts sub-paths without fills.
+# Every value was cross-checked against GoodNotes' own exports (Test4-Test9.pdf) or rasters.
+EXPECTED: Dict[str, dict] = {
+    "Test4.goodnotes": {"title": "Test4", "sizes": [(455.04, 588.45)] * 2, "paper": ["plain", "grid"],
+                        "builtin": [True] * 2, "strokes": [0, 5], "fills": [0, 0], "texts": [0, 0], "images": [0, 0]},
+    "Test5.goodnotes": {"title": "Test5", "sizes": [(455.04, 588.45)] * 3, "paper": ["plain", "grid", "grid"],
+                        "builtin": [True] * 3, "strokes": [0, 17, 48], "fills": [0, 0, 0], "texts": [0, 0, 2],
+                        "images": [0, 0, 1]},
+    "Test6.goodnotes": {"title": "Test6", "sizes": [(455.04, 588.45)] * 5,
+                        "paper": ["lined", "plain", "plain", "plain", "plain"], "builtin": [True] * 5,
+                        "strokes": [13, 1, 3, 0, 1], "fills": [2, 0, 1, 0, 0], "texts": [1] * 5, "images": [0] * 5,
+                        "backgrounds": ["CF226D59", "A5C81AC6", "A5C81AC6", "A5C81AC6", "A5C81AC6"]},
+    "Test7.goodnotes": {"title": "Test7", "sizes": [(455.04, 588.45)] * 4, "paper": ["plain"] * 4,
+                        "builtin": [True] * 4, "strokes": [14, 4, 1, 5], "fills": [0, 3, 0, 0],
+                        "texts": [7, 4, 1, 2], "images": [0] * 4, "backgrounds": ["A79EA933"] * 4},
+    "Test8.goodnotes": {"title": "Test8", "sizes": [(455.04, 588.45)] * 4, "paper": ["plain"] * 4,
+                        "builtin": [True] * 4, "strokes": [2, 2, 1, 1], "fills": [2, 2, 0, 0],
+                        "texts": [0] * 4, "images": [0] * 4, "backgrounds": ["46EB3A2A"] * 4},
+    "Test9.goodnotes": {"title": "Test", "sizes": [(595.28, 841.89)] * 4 + [(1280.0, 905.0), (595.2, 841.68), (454.91, 143.28)],
+                        "paper": ["plain", "grid", "grid", "plain", "plain", "plain", "plain"],
+                        "builtin": [True, True, True, True, False, False, False],
+                        "strokes": [0, 123, 0, 11, 0, 22, 6], "fills": [0] * 7, "texts": [0, 0, 4, 0, 0, 0, 0],
+                        "images": [0, 0, 1, 1, 0, 0, 0],
+                        "backgrounds": ["03D3A8D4", "B0212B82", "B0212B82", "6F089296", "F5503752", "80973E20", "4043E92A"]},
+    "test.goodnotes": {"title": "Untitled Notebook", "sizes": [(595.28, 841.89)], "paper": ["grid"],
+                       "builtin": [True], "strokes": [1], "fills": [0], "texts": [0], "images": [0]},
+    "test2.goodnotes": {"title": "Untitled (Draft)", "sizes": [(595.28, 841.89)], "paper": ["grid"],
+                        "builtin": [True], "strokes": [1], "fills": [0], "texts": [0], "images": [0]},
+    "test3.goodnotes": {"title": "Untitled (Draft)", "sizes": [(595.28, 841.89)], "paper": ["grid"],
+                        "builtin": [True], "strokes": [2], "fills": [0], "texts": [0], "images": [0]},
+    "ex1.goodnotes": {"title": "Homework04_B11315022", "sizes": [(455.04, 588.45)], "paper": ["dotted"],
+                      "builtin": [True], "strokes": [1494], "fills": [0], "texts": [0], "images": [3]},
+    "ex2.goodnotes": {"title": "Teat (2)", "sizes": [(455.04, 588.45)], "paper": ["dotted"],
+                      "builtin": [True], "strokes": [28], "fills": [0], "texts": [0], "images": [0]},
+    "ex3.goodnotes": {"title": "Ch 2.3", "sizes": [(455.04, 588.45)], "paper": ["dotted"],
+                      "builtin": [True], "strokes": [2459], "fills": [0], "texts": [0], "images": [2]},
+    "record.goodnotes": {"title": "record", "sizes": [(455.04, 588.45)] * 2, "paper": ["dotted"] * 2,
+                         "builtin": [True] * 2, "strokes": [6, 6], "fills": [0, 0], "texts": [0, 0], "images": [0, 0]},
+}
+UNDERSTOOD_WARNINGS = ("pencil strokes are approximated",)
+
+
+def _counts(doc: Document) -> dict:
+    return {"sizes": [(round(p.width, 2), round(p.height, 2)) for p in doc.pages],
+            "paper": [p.paper for p in doc.pages],
+            "builtin": [p.template_is_builtin for p in doc.pages],
+            "strokes": [sum(1 for s in p.strokes if s.kind != "fill") for p in doc.pages],
+            "fills": [sum(1 for s in p.strokes if s.kind == "fill") for p in doc.pages],
+            "texts": [len(p.texts) for p in doc.pages],
+            "images": [len(p.images) for p in doc.pages]}
+
+
+def _attachment_member(data: bytes, uuid: str) -> str:
+    z = zipfile.ZipFile(io.BytesIO(data))
+    for rec in protobuf.decode_records(z.read("index.attachments.pb")):
+        fields = protobuf.decode_message(rec)
+        if bytes(protobuf.get(fields, 1).value).decode().upper() == uuid:
+            return bytes(protobuf.get(fields, 2).value).decode()
+    return "attachments/" + uuid
+
 
 def test_all_samples_read_without_exception(samples):
+    """Invariants that hold for every .goodnotes file, known or not."""
     for path in samples.goodnotes_files():
         doc = _read(path)
         assert doc.source_format == "goodnotes"
         assert doc.pages, path.name
         for page in doc.pages:
             assert page.width > 0 and page.height > 0
+            assert page.paper in ("plain", "lined", "grid", "dotted")
+            if page.background is not None:
+                assert page.background.pdf_id in doc.pdfs
+                assert doc.pdfs[page.background.pdf_id].startswith(b"%PDF-")
             for s in page.strokes:
                 assert s.points
-                assert all(p.width > 0 for p in s.points)
+                if s.kind == "fill":
+                    assert s.outline and s.width == 0.0 and s.controls is None
+                else:
+                    assert s.kind in ("pen", "highlighter")
+                    assert s.width > 0 and all(p.width > 0 for p in s.points)
                 if s.controls is not None:
                     assert len(s.controls) == len(s.points) - 1
+                # the stroke starts inside its page (5 % tolerance); later points may stray in
+                # the legacy ribbon strokes of ex2
                 x, y = _first(s.points)
                 assert -0.05 * page.width <= x <= 1.05 * page.width, (path.name, x)
                 assert -0.05 * page.height <= y <= 1.05 * page.height, (path.name, y)
                 assert all(0.0 <= c <= 1.0 for c in s.color)
+            for im in page.images:
+                assert im.fmt in ("png", "jpeg", "pdf") and im.data
+                assert im.w > 0 and im.h > 0
+                assert 0.0 <= im.rotation < 360.0
+            for t in page.texts:
+                assert t.align in ("left", "center", "right")
+                assert "".join(r.text for r in t.runs) == t.text
         for w in doc.warnings:
             assert "\n" not in w
 
 
+def test_known_samples_match_exact_expectations(samples):
+    seen = set()
+    for path in samples.goodnotes_files():
+        expected = EXPECTED.get(path.name)
+        if expected is None:
+            continue
+        seen.add(path.name)
+        doc = _read(path)
+        assert doc.title == expected["title"], path.name
+        got = _counts(doc)
+        for key in ("sizes", "paper", "builtin", "strokes", "fills", "texts", "images"):
+            assert got[key] == expected[key], (path.name, key, got[key], expected[key])
+        if "backgrounds" in expected:
+            assert [p.background.pdf_id[:8] for p in doc.pages] == expected["backgrounds"], path.name
+        # nothing understood produces a warning
+        assert all(any(u in w for u in UNDERSTOOD_WARNINGS) for w in doc.warnings), (path.name, doc.warnings)
+        # built-in papers are 1-page catalogue PDFs stored in doc.pdfs and referenced by the page
+        for page in doc.pages:
+            assert page.background is not None and page.background.page_index == 0
+            if page.template_is_builtin:
+                assert page.background.pdf_id in doc.pdfs
+    assert seen, "no known sample file found"
+
+
 def test_pages_match_oracle(samples):
+    """parser-for-goodnotes models pages, backgrounds, #7 strokes, auto-shapes and #1 images:
+    compare only that.  It does not parse #8 RTF boxes, counts #9 fills as text fragments, skips
+    stored (bv4-) frames and drops tiny strokes, so its strokes are a subset of ours."""
     for path in samples.goodnotes_files():
         doc = _read(path)
         oracle = oracle_pages(samples, path)
@@ -163,18 +296,25 @@ def test_pages_match_oracle(samples):
         for i, (page, opage) in enumerate(zip(doc.pages, oracle)):
             assert page.width == pytest.approx(opage["width"], abs=0.01), (path.name, i)
             assert page.height == pytest.approx(opage["height"], abs=0.01), (path.name, i)
+            if page.background is not None and opage["background"]:
+                assert page.background.page_index == (opage["pdf_page_index"] or 1) - 1  # oracle: 1-based
+                # the oracle names the ZIP member; ours is the attachment id (index.attachments.pb
+                # maps an "internal" id such as Test9's 80973E20 to its storage member)
+                assert opage["background"] == _attachment_member(data, page.background.pdf_id), (path.name, i)
             scale = page.width / (opage["width"] * K)
             elements = element_walk(data, opage["member"])
-            # stroke counts: one Stroke per sub-path, shapes count once
+            # stroke counts: one Stroke per sub-path, shapes and live fills count once
             assert len(page.strokes) == sum(e["k"] for e in elements), (path.name, i)
-            # oracle: one or more strokes per non-empty ink element, identified by uuid
             ink = [e for e in elements if e["kind"] == "ink"]
+            visible = [e for e in ink if e["oracle_visible"]]
             ouuids = []
             for s in opage["strokes"]:
                 if not ouuids or ouuids[-1] != s["uuid"]:
                     ouuids.append(s["uuid"])
-            assert len(ouuids) == len(ink), (path.name, i)
-            assert len(set(ouuids)) == len(ink), (path.name, i)
+            assert len(set(ouuids)) == len(ouuids), (path.name, i)
+            mine_uuids = {e["uuid"] for e in ink}
+            assert set(ouuids) <= mine_uuids, (path.name, i, set(ouuids) - mine_uuids)
+            assert {e["uuid"] for e in visible} <= set(ouuids), (path.name, i)
             # shapes and images
             assert len(page.images) == len(opage["images"])
             assert sum(1 for e in elements if e["kind"] == "shape") == opage["shapes"]
@@ -183,16 +323,16 @@ def test_pages_match_oracle(samples):
             first_oracle = {}
             for s in opage["strokes"]:
                 first_oracle.setdefault(s["uuid"], s)
-            oi = 0
             for e in elements:
                 mine = page.strokes[pos:pos + e["k"]]
                 pos += e["k"]
                 if e["kind"] != "ink":
                     continue
-                o = first_oracle[ouuids[oi]]
-                oi += 1
                 r, g, b, a = e["rgba"]
                 assert tuple(round(c, 4) for c in mine[0].color) == tuple(round(c, 4) for c in (r, g, b, a))
+                o = first_oracle.get(e["uuid"])
+                if o is None:
+                    continue
                 hexv = o["color"].lstrip("#")
                 for comp, hx in zip((r, g, b), (hexv[0:2], hexv[2:4], hexv[4:6])):
                     assert abs(round(comp * 255) - int(hx, 16)) <= 1, (path.name, i, o["color"], e["rgba"])
@@ -231,8 +371,10 @@ def test_flat_strokes_are_exact_cubic_chains(samples):
 
 
 def test_backgrounds_builtin_papers(samples):
-    for name in ("Test4", "Test5", "test", "test2", "test3"):
+    for name in ("Test4", "Test5", "Test6", "Test7", "Test8", "test", "test2", "test3"):
         path = samples.repo("goodparse") / "samples" / f"{name}.goodnotes"
+        if not path.is_file():
+            continue
         doc = _read(path)
         for page in doc.pages:
             assert page.template_is_builtin
@@ -455,7 +597,8 @@ def build_container(pages: List[dict], attachments: Dict[str, bytes], templates:
                     title: str = "Synthetic", renamed: Optional[str] = None, deleted: List[str] = (),
                     with_events: bool = True, with_notes_index: bool = True, reorder: Dict[str, str] = None) -> bytes:
     """pages: [{"P": page uuid (ends 0-E), "T": template uuid, "key": order key, "notes": bytes}]
-    templates: [{"T": uuid, "A": attachment uuid, "page": 1-based, "canvas": (w, h) | None, "name": str, "lined": bool}]"""
+    templates: [{"T": uuid, "A": attachment uuid, "page": 1-based, "canvas": (w, h) | None, "name": str,
+                 "lined": bool (#18.#3 present), "blank_hint": bool (#7 / #18.#2 only)}]"""
     DOC = "D0000000-0000-4000-8000-000000000000"
     def trailer(d: int) -> bytes:
         return (_f.field_fixed64(10, 1.7e12) + _f.field_bytes(11, "E0000000-0000-4000-8000-000000000001")
@@ -473,8 +616,12 @@ def build_container(pages: List[dict], attachments: Dict[str, bytes], templates:
         if t.get("A"):
             body += _f.field_bytes(4, t["A"])
         body += _f.field_varint(5, t.get("page", 1)) + _f.field_varint(6, 1)
-        if t.get("lined"):
+        if t.get("lined"):  # #7 / #18.#2 also appear on blank papers; #18.#3 marks a ruled PDF
             body += _f.field_fixed64(7, 29.333333)
+            body += _f.field_message(18, _f.field_fixed32(2, 29.333333) + _f.field_fixed32(3, 0.9167))
+        elif t.get("blank_hint"):
+            body += _f.field_fixed64(7, 29.333333)
+            body += _f.field_message(18, _f.field_fixed32(2, 29.333333))
         if t.get("canvas"):
             body += _f.field_message(8, _pt(*t["canvas"]))
         body += _f.field_bytes(9, t.get("name", "user.pdf")) + trailer(15)

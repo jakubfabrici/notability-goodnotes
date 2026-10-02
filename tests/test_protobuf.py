@@ -1,9 +1,13 @@
 """Unit tests for gnnote.protobuf: hand vectors from docs/goodnotes-stroke.md, round trips,
-malformed input, and a walk over every record of every sample notebook."""
+malformed input, and a walk over every record of every sample notebook (byte-identical
+re-encoding for every record of every file; exact record counts only for the files of
+:data:`RECORD_EXPECTED`)."""
 from __future__ import annotations
 
 import struct
 import zipfile
+from pathlib import Path
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import pytest
 
@@ -197,16 +201,34 @@ def test_encode_decode_identity_random_message():
 
 # --------------------------------------------------------------------------- samples
 
+# file -> (notes/ members, records in them, ink strokes carrying an Apple LZ4 frame)
+RECORD_EXPECTED: Dict[str, Tuple[int, int, int]] = {
+    "Test4.goodnotes": (2, 10, 5),
+    "Test5.goodnotes": (3, 98, 46),
+    "Test6.goodnotes": (6, 64, 22),
+    "Test7.goodnotes": (5, 106, 36),
+    "Test8.goodnotes": (4, 32, 10),
+    "Test9.goodnotes": (7, 384, 186),
+    "test.goodnotes": (2, 4, 2),
+    "test2.goodnotes": (1, 2, 1),
+    "test3.goodnotes": (1, 4, 2),
+    "ex1.goodnotes": (1, 5620, 2807),
+    "ex2.goodnotes": (1, 50, 25),
+    "ex3.goodnotes": (1, 5484, 2740),
+    "record.goodnotes": (2, 98, 49),
+}
 
-def _walk_elements(path):
-    """Yield (member, metadata fields, stroke fields) for every (metadata, content) pair."""
+
+def _walk_elements(path: Path) -> Iterator[Tuple[str, Optional[List[pb.Field]], List[pb.Field]]]:
+    """Yield (member, metadata fields, content fields) for every content record of every
+    ``notes/`` member, re-encoding each record on the way; the metadata is the record just
+    before the content record."""
     with zipfile.ZipFile(path) as z:
         for name in z.namelist():
             if not name.startswith("notes/"):
                 continue
-            records = pb.decode_records(z.read(name))
             previous = None
-            for rec in records:
+            for rec in pb.decode_records(z.read(name)):
                 fields = pb.decode_message(rec)
                 assert pb.encode_message(fields) == rec
                 content = pb.get(fields, 7)
@@ -216,20 +238,32 @@ def _walk_elements(path):
                 previous = fields
 
 
+def _count_records(path: Path) -> Tuple[int, int]:
+    members = records = 0
+    with zipfile.ZipFile(path) as z:
+        for name in z.namelist():
+            if name.startswith("notes/"):
+                members += 1
+                records += len(pb.decode_records(z.read(name)))
+    return members, records
+
+
 def test_every_sample_record_decodes_and_reencodes(samples):
-    total = 0
-    pairs_ok = 0
     for path in samples.goodnotes_files():
+        frames = 0
         for _name, meta, stroke in _walk_elements(path):
             geo = pb.get(stroke, 2)
-            if geo is None or geo.value[:4] != b"bv41":
+            if geo is None or geo.value[:4] not in (b"bv41", b"bv4-", b"bv4$"):
                 continue
-            total += 1
-            assert pb.varint_value(pb.get(stroke, 21)) in (24, 25)
-            assert pb.string_value(pb.get(stroke, 1)) == pb.string_value(pb.get(meta, 1))
-            assert pb.varint_value(pb.get(meta, 16)) == pb.varint_value(pb.get(stroke, 21))
+            frames += 1
+            assert meta is not None, path.name
+            assert pb.varint_value(pb.get(stroke, 21)) in (24, 25), path.name
+            assert pb.string_value(pb.get(stroke, 1)) == pb.string_value(pb.get(meta, 1)), path.name
+            assert pb.varint_value(pb.get(meta, 16)) == pb.varint_value(pb.get(stroke, 21)), path.name
             # clocks: metadata #2 == stroke #15 (doc section 1.1)
-            assert pb.bytes_value(pb.get(meta, 2)) == pb.bytes_value(pb.get(stroke, 15))
-            pairs_ok += 1
-    assert total == 5677
-    assert pairs_ok == total
+            assert pb.bytes_value(pb.get(meta, 2)) == pb.bytes_value(pb.get(stroke, 15)), path.name
+        members, records = _count_records(path)
+        assert members >= 1 and records >= 1 and frames >= 1, path.name
+        expected = samples.expected_for(path, RECORD_EXPECTED)
+        if expected is not None:
+            assert (members, records, frames) == expected, path.name
