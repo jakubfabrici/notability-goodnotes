@@ -356,7 +356,7 @@ event synthesis, inkref's confirmed stroke encoding):
 * `tests/conftest.py`: fixture `samples` → directory with the reference repositories
   (`franzthiemann/goodparse`, `Kaih1825/parser-for-goodnotes`, `HuyNguyenAu/notability-to-svg`,
   `xrayshan/notability-reader`, `samuelsadok/notesconverter`, `nokcha0/Notability-notes-converter`,
-  `cable729/inkterop`), taken from `$GNNOTE_SAMPLES` if set, else cloned shallowly into
+  `cable729/inkterop`), taken from `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
   `tests/.samples/` (skipped when offline). Oracle parsers run **in a subprocess** with their
   own `PYTHONPATH` (never imported into our package).
 * Unit tests per primitive (hand-built vectors + round trips). Reader tests over every sample

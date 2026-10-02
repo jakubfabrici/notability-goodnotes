@@ -19,10 +19,15 @@ app opens as its own.
 | Handwriting | Editable Bezier ink; per-point **pressure (width) kept** | Editable ink; widths **flattened to one constant width** per stroke (GoodNotes' flat pen has no per-point width) |
 | Highlighter | Kept as highlighter (Notability's own translucency) | Kept as highlighter (alpha 0.5) |
 | Pencil | Written as a pen stroke (constant width, tilt dropped) | Written as a ball pen stroke |
-| Images (PNG/JPEG) | Kept, position and size | Kept, position and size (rotation dropped) |
-| Text boxes | Kept with bold/italic/underline, font, size, colour | Kept (RTF) |
+| Images (PNG/JPEG) | Kept, position and size; EXIF-rotated photos keep their rotation (unverified in Notability) | Kept, position and size; a rotation is kept only when the JPEG's EXIF orientation prescribes it |
+| Vector stickers (PDF images) | Dropped | Kept as PDF image attachments |
+| Shape fills (the translucent fill of GoodNotes auto-shapes) | Dropped (Notability has no filled shapes) | Kept |
+| Text boxes | Kept with bold/italic/underline, font, size, colour, alignment and rotation; includes the text stickers of the 2026 GoodNotes builds | Kept (RTF) with alignment; rotation dropped |
 | User-imported PDFs | Always carried as PDF-backed pages | Always carried as PDF pages (multi-page PDFs stay one attachment) |
 | Stock paper | `--paper plain` (default): Notability plain paper, page scaled to fit; `--paper pdf`: the GoodNotes paper PDF behind every page | Plain generated paper (Notability's own template PDFs are carried as PDF pages) |
+
+GoodNotes notebooks written by GoodNotes 5 and 6 up to the 2026 builds (container schema 24,
+25 and 35) and Notability notes from version 4 to 16 are read.
 
 Dropped, with a warning in the output: audio recordings, stickers / sticky notes, GoodNotes
 auto-shapes as shape objects (they become ordinary strokes sampled along the shape), stroke
