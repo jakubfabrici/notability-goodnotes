@@ -115,9 +115,9 @@ Unchanged: one 82-byte record `{#1 N, #2 "notes/" + N}` per page, 83 bytes with 
 0-byte members). Confidence: high.
 
 ### 4.2 `N = P + 1` as a 128-bit integer (carry-aware)
-All 30 page/notes pairs in the corpus satisfy `int(N) == int(P) + 1` where the UUID is read as a
-32-digit hex number. In 27 pairs only the last digit changes; in three the page UUID ends in `F`
-and the increment carries:
+All 36 page/notes pairs in the corpus (33 live pages + 3 deleted ones) satisfy
+`int(N) == int(P) + 1` where the UUID is read as a 32-digit hex number. In 33 pairs only the last
+digit changes; in three the page UUID ends in `F` and the increment carries:
 
 | file | page UUID `P` (events, `#54.#2`) | notes UUID `N` (`index.notes.pb`, `#102.#1`) |
 |---|---|---|
@@ -337,7 +337,7 @@ the only description of reordering; keep handling it (our reader does). Confiden
 ### 8.9 Other events in the new files
 `#10` (current page), `#102` (per notes layer written; Test9 record 46 carries `#15 = 35` for the
 letter-text layer, all others 24), `#103`/`#105` (PDF text-indexed; Test7 has them for all three
-papers although two pages are blank), `#104`/`#105` (Test9: 33 + 34 of them, one pair per
+papers, including the one bound only to the deleted page), `#104`/`#105` (Test9: 33 + 34 of them, one pair per
 recognition pass of a layer, `#105.#1 = 1` always, `#5` hash present on most) — all as documented
 in `goodnotes-container.md` §10.3 / Critic 5.
 
@@ -373,8 +373,8 @@ reports, for every one of the 13 files:
 * **A. page sizes in display order == GoodNotes export PDF** (Test4–9, 25 pages): MATCH.
   Test9: `595.28×841.89 ×4, 1280×905, 595.2×841.68, 454.91×143.28`.
 * **B. display order and background member per page == parser-for-goodnotes
-  (`Page.uuid`, `background_attachment_path`)**: MATCH for all 13 files (49 pages incl. the
-  internal-paper page → `attachments/4452790C…`).
+  (`Page.uuid`, `background_attachment_path`)**: MATCH for all 13 files (33 live pages incl. the
+  internal-paper page → `attachments/4452790C…`; the 3 deleted pages are hidden by both).
 * **C. ruled lines visible on the export page == bound paper PDF draws lines** (catalogue papers,
   pymupdf raster): MATCH for Test4–9, which pins the `#3` re-binds and the §8.5 finding.
 
