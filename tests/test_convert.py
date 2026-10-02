@@ -357,13 +357,17 @@ def test_notability_to_goodnotes_roundtrip(samples, tmp_path: Path) -> None:
             label = f"{path.name} page {i + 1}"
             assert abs(a.width - b.width) < 0.05 and abs(a.height - b.height) < 0.05, label
             assert b.background is not None, label  # every GoodNotes page has a paper PDF
-            if a.background is not None and not a.template_is_builtin:
-                # user PDF: carried verbatim, same page index
+            if a.background is not None:
+                # A PDF behind a Notability page (a user PDF, or Notability's own 11.7+
+                # template paper) is carried verbatim with the same page index.  It is not
+                # GoodNotes stock paper, so it reads back as a user PDF (design.md 4.4: only
+                # generated paper gets the catalogue name).
                 assert not b.template_is_builtin, label
                 assert b.background.page_index == a.background.page_index, label
                 assert back.pdfs[b.background.pdf_id] == src.pdfs[a.background.pdf_id], label
             else:
-                assert b.template_is_builtin, label
+                # plain Notability paper becomes gnnote-generated paper = stock paper
+                assert b.template_is_builtin and b.paper == "plain", label
             assert len(b.strokes) == len(a.strokes), label
             assert len(b.images) == len(a.images), label
             non_empty = [t for t in a.texts if (t.text or "").strip() or t.runs]
@@ -540,11 +544,13 @@ def test_poc_parity_test5_page_3(samples) -> None:
     The PoC was made with goodparse, which drops the first stored point of every stroke,
     keeps only the first half of the stored points of flat strokes (controls and ends
     interleaved), skips auto-shape elements and decodes the pencil elements it recognises as
-    one identical partial curve.  Hence: every PoC curve pairs in order with a non-pencil
-    ink element (its first point within 2 document units of our first anchor, first handles
-    or second anchor; ribbon strokes also agree on their last point; colours identical), the
-    only unpaired PoC curves are the pencil ones (lying on our pencil ink), and our curve
-    count equals the number of GoodNotes sub-paths on the page.
+    one identical partial curve; its stride heuristic also truncates one ribbon stroke.
+    Hence: every PoC curve pairs in order with a non-pencil ink element (its first point
+    within 2 document units of our first anchor, first handles or second anchor; ribbon
+    strokes also agree on their last point unless goodparse truncated them; RGB identical,
+    highlighter alpha is Notability's own), the only unpaired PoC curves are the pencil ones
+    (lying on our pencil ink), and our curve count equals the number of GoodNotes sub-paths
+    on the page.
     """
     poc = _poc_note()
     if poc is None:
@@ -590,6 +596,7 @@ def test_poc_parity_test5_page_3(samples) -> None:
 
     paired = 0
     pencil_curves = 0
+    truncated = 0
     ei = 0
     for ci, curve in enumerate(poc_curves):
         poc_first, poc_last = curve[0], curve[-1]
@@ -598,10 +605,25 @@ def test_poc_parity_test5_page_3(samples) -> None:
             head = mine[0][0][:4]  # first anchor, two handles, second anchor
             if min(math.dist(poc_first, p) for p in head) < 2.0:
                 if element["fmt"] == "ribbon":
-                    assert len(curve) == len(mine[-1][0]) - 3, f"PoC curve {ci}: point count"
-                    d_last = math.dist(poc_last, mine[-1][0][-1])
-                    assert d_last < 2.0, f"PoC curve {ci}: last point off by {d_last:.2f}"
-                assert poc_colors[ci] == mine[0][1], f"PoC curve {ci}: colour"
+                    ours_pts = mine[-1][0]
+                    if len(curve) in (len(ours_pts) - 3, len(ours_pts)):
+                        # goodparse drops the first stored point; a dot is a 4-point dash on
+                        # both sides
+                        d_last = math.dist(poc_last, ours_pts[-1])
+                        assert d_last < 2.0, f"PoC curve {ci}: last point off by {d_last:.2f}"
+                    else:
+                        # goodparse's stride heuristic truncated this element; what it kept
+                        # must still lie on our curve
+                        assert len(curve) < len(ours_pts), f"PoC curve {ci}: point count"
+                        anchors = ours_pts[::3]
+                        for p in curve[::3]:
+                            assert min(math.dist(p, a) for a in anchors) < 2.0, f"PoC curve {ci}: off our curve"
+                        truncated += 1
+                assert poc_colors[ci][:3] == mine[0][1][:3], f"PoC curve {ci}: colour"
+                # The PoC kept GoodNotes' highlighter alpha (0.5 = 0x80); the writer uses the
+                # alpha Notability itself stores for highlighters (0x6b, design.md 4.2).
+                expected_alpha = 0x6B if mine[0][1][3] == 0x6B else poc_colors[ci][3]
+                assert mine[0][1][3] == expected_alpha, f"PoC curve {ci}: alpha"
                 paired += 1
                 ei += 1
                 continue
@@ -610,3 +632,4 @@ def test_poc_parity_test5_page_3(samples) -> None:
         pencil_curves += 1
     assert paired == len(comparable) == 26, (paired, len(comparable))
     assert pencil_curves == 2
+    assert truncated == 1  # the red ribbon stroke goodparse cut after two anchors

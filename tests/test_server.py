@@ -424,3 +424,81 @@ def test_main_module_delegates_to_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "gnnote.cli", fake_cli)
     assert entry.main(["info", "x.note"]) == 3
     assert seen == [["info", "x.note"]]
+
+
+# --------------------------------------------------------------------------- real converter
+
+@pytest.fixture
+def real_server(web_root: Path) -> Iterator[Tuple[str, int]]:
+    """A live server using the real ``gnnote.convert`` (no fake in ``sys.modules``)."""
+    import gnnote.convert as real_module
+    assert getattr(real_module, "__file__", None), "a fake gnnote.convert leaked into sys.modules"
+    server = srv.make_server("127.0.0.1", 0, web_root, quiet=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_address[0], server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _tiny_note() -> bytes:
+    """A one-page Notability note with two strokes and a text box built by our own writer."""
+    from gnnote.model import Document, Page, Point, Stroke, TextBox
+    from gnnote.notability.writer import write_note
+
+    page = Page(612.0, 803.25)
+    page.strokes.append(Stroke([Point(50, 50, 2.0), Point(120, 90, 2.5), Point(200, 50, 2.0)], width=2.0))
+    page.strokes.append(Stroke([Point(60, 300, 8.0), Point(260, 300, 8.0)], color=(1.0, 0.9, 0.0, 0.42),
+                               kind="highlighter", width=8.0))
+    page.texts.append(TextBox(40, 400, 200, 40, "Ahoj, svet"))
+    return write_note(Document(title="Mini", pages=[page], source_format="notability"), None)
+
+
+def test_convert_real_note_over_http(real_server: Tuple[str, int]) -> None:
+    from gnnote.convert import detect_format
+    from gnnote.goodnotes.reader import read_goodnotes
+
+    note = _tiny_note()
+    body, ctype = _multipart({}, ("file", "Mini.note", note))
+    status, headers, out = _request(
+        real_server, "POST", "/api/convert?paper=plain&pressure=true&simplify=0",
+        body, {"Content-Type": ctype, "Content-Length": str(len(body))})
+    assert status == 200, out[:300]
+    assert headers["X-GnNote-Source-Format"] == "notability"
+    assert headers["X-GnNote-Target-Format"] == "goodnotes"
+    assert 'filename="Mini.goodnotes"' in headers["Content-Disposition"]
+    stats = json.loads(headers["X-GnNote-Stats"])
+    assert stats == {"pages": 1, "strokes": 2, "images": 0, "texts": 1, "pdfs": 0}
+    assert isinstance(json.loads(headers["X-GnNote-Warnings"]), list)
+    assert detect_format("Mini.goodnotes", out) == "goodnotes"
+    back = read_goodnotes(out)
+    assert back.title == "Mini"
+    assert [len(p.strokes) for p in back.pages] == [2]
+    assert back.pages[0].strokes[1].kind == "highlighter"
+    assert back.pages[0].texts[0].text == "Ahoj, svet"
+    assert back.pages[0].template_is_builtin  # gnnote paper is stock paper when read back
+
+    # the other direction over the same server: GoodNotes bytes come back as a .note
+    body2, ctype2 = _multipart({"title": "Renamed"}, ("file", "Mini.goodnotes", out))
+    status2, headers2, out2 = _request(
+        real_server, "POST", "/api/convert", body2,
+        {"Content-Type": ctype2, "Content-Length": str(len(body2))})
+    assert status2 == 200, out2[:300]
+    assert headers2["X-GnNote-Target-Format"] == "notability"
+    from gnnote.notability.reader import read_note
+    again = read_note(out2)
+    assert again.title == "Renamed" and sum(len(p.strokes) for p in again.pages) == 2
+
+    # invalid options and non-files are 400s from the real module too
+    status3, _h3, out3 = _request(
+        real_server, "POST", "/api/convert?paper=lined", body,
+        {"Content-Type": ctype, "Content-Length": str(len(body))})
+    assert status3 == 400 and "paper" in json.loads(out3)["error"]
+    body4, ctype4 = _multipart({}, ("file", "junk.note", b"not a zip at all"))
+    status4, _h4, out4 = _request(
+        real_server, "POST", "/api/convert", body4,
+        {"Content-Type": ctype4, "Content-Length": str(len(body4))})
+    assert status4 == 400 and json.loads(out4)["status"] == 400

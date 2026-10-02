@@ -110,6 +110,9 @@ def _cmd_convert(args: argparse.Namespace, out: Any, err: Any) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=err)
         return 1
+    except Exception as exc:  # noqa: BLE001 - a damaged file must not end in a traceback
+        print(f"error: {source.name} could not be converted ({exc.__class__.__name__}: {exc})", file=err)
+        return 1
     target = _output_path(source, result.filename, args.output)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -190,6 +193,9 @@ def _cmd_info(args: argparse.Namespace, out: Any, err: Any) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=err)
         return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"error: {source.name} could not be read ({exc.__class__.__name__}: {exc})", file=err)
+        return 1
     if args.json:
         print(json.dumps(info, ensure_ascii=False, indent=2), file=out)
     else:
@@ -232,7 +238,7 @@ def _cmd_batch(args: argparse.Namespace, out: Any, err: Any) -> int:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Run the CLI; returns the exit status instead of calling :func:`sys.exit`."""
+    """Run the CLI; returns the exit status (0 ok, 1 failure, 2 usage) instead of exiting."""
     parser = build_parser()
     try:
         args = parser.parse_args(list(argv) if argv is not None else None)
