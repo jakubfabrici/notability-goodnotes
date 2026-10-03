@@ -383,7 +383,9 @@ event synthesis, inkref's confirmed stroke encoding):
   (**module** worker) + `styles.css` + `i18n.js` (Slovak default, English toggle, strings in
   one table). Works from `file://`? No — served over HTTP (`python -m gnnote.server` or any
   static host). Phone-width layout, dark mode via `prefers-color-scheme`.
-* Flow: choose/drop a `.goodnotes` or `.note` → options (paper: plain/pdf; pressure; simplify)
+* Flow: choose/drop a file with a readable format's extension (`web/formats.js`), or any `.zip`
+  (a zipped note, e.g. a CollaNote package `X.cnote.zip`; the converter decides from the content)
+  → options (paper: plain/pdf; pressure; simplify)
   → "Convert" → progress (loading Python ~13.5 MB on first use, converting) → download card with
   the output name, stats, warnings → buttons: **Download** (`a[download]`) and, when
   `navigator.canShare({files})`, **Share / Save to Files** (`navigator.share`). Errors show the

@@ -62,7 +62,7 @@ Swift `Codable` output (the key `moddificationInfo` keeps the developer's spelli
 | Key | Meaning | Confidence |
 |---|---|---|
 | `_dkDrawing` | list of base64 strings, each one `Drawing` message (section 3.1); `[""]` on a page without ink | verified |
-| `drawing` | base64 PencilKit drawing: the same empty 64- or 42-byte drawing on every current page; CollaNote 1.x kept its ink there | verified (empty); legacy content unverified |
+| `drawing` | base64 PencilKit drawing: an empty drawing (64 or 42 bytes) on every current page; CollaNote 1.x kept its ink there | verified (empty); legacy content unverified |
 | `pdfPointer` | `{pdfIndex, pageIndex}` (0-based): page `pageIndex` of `<pdfIndex>.pdf` lies behind the page; absent on blank pages | verified |
 | `attachments` | images and text boxes, in z-order (section 3.2) | verified |
 | `strokeCountBeforeSaving` | equals the number of stroke records in `_dkDrawing` (all 427 pages); a mismatch is reported | verified |
@@ -92,7 +92,8 @@ a missing field reads as 0.
 | other | | unknown (CollaNote has 25+ pens) | pen, one warning listing the codes |
 
 Points become a polyline (`Stroke.controls = None`), each with its own width; ink outside the page
-is kept (crosses over whole slides run past the edges: in the PDF notes 3 % of the points lie more than 5 % outside the page).
+is kept (crosses over whole slides run past the edges: in the PDF notes 3 % of the points lie more
+than 5 % outside the page).
 
 ### 3.2 Attachments
 
@@ -101,7 +102,7 @@ attStringData}`. Centre and size are normalised separately by the canvas width a
 (verified: the box matches the pixel aspect of 65 of 66 images; the other one was stretched in the
 app).
 
-* `type: "image"`: `imageInData` = base64 PNG or JPEG (57 + 9 seen) → `Image` at
+* `type: "image"`: `imageInData` = base64 PNG or JPEG (57 PNG and 9 JPEG seen) → `Image` at
   `x = (cx·W − w·W/2)·s`, `y = (cy·H − h·H/2)·s`, size `w·W·s × h·H·s`; a PDF payload becomes
   `Image(fmt="pdf")`; anything else is skipped with a warning. `attStringData` holds the placeholder
   "This Sticker should be a image, not a TextView". `rotatedDegree` → `Image.rotation`, assumed
@@ -112,9 +113,9 @@ app).
   NSColor: UIColor}`; several runs would use `NSAttributeInfo`, unverified) → `TextBox` in the same
   frame, font family, size `NSSize · s` (the font size is taken to be in canvas units, so it scales
   with the page: **inferred**), colour, bold / italic from the font name or traits; the trailing
-  newline of the text view is dropped. A rotation is applied about the centre (the model turns text
-  about the top-left corner, so the corner is moved accordingly). One warning says the layout is
-  inferred from a single sample.
+  newline of the text view is dropped. A rotation is applied about the centre (unverified, the
+  sample is not rotated; the model turns text about the top-left corner, so the corner is moved
+  accordingly). One warning says the layout is inferred from a single sample.
 * Anything else (another `type`, a text box whose string cannot be read) is skipped with a warning
   naming the kind.
 
@@ -236,8 +237,9 @@ Samples that would close the gaps (CollaNote ≥ 5.0; please give the app and iP
    pencil, the 3D and seasonal pens) at the smallest and largest width, each in another colour;
    freehand and straight highlighter; a straightened line, a recognised rectangle and circle; a
    lasso-moved group and a lasso-rotated one; a photo rotated about 30°; a text box with two lines,
-   bold, italic and a colour, rotated if possible. Export it as a CollaNote file **and** as PDF
-   (the PDF is the visual reference for widths, colours and positions).
+   bold, italic and a colour, rotated if possible; optionally a 3-second audio recording. Export it
+   as a CollaNote file **and** as PDF (the PDF is the visual reference for widths, colours and
+   positions).
 2. **PDF note**: import one PDF mixing A4 portrait, US Letter and 16:9 pages, draw a corner-to-corner
    cross on each, export as `.cnote` and as PDF.
 3. **Library copy**: in Files, compress a note from the CollaNote iCloud folder and send the `.zip`

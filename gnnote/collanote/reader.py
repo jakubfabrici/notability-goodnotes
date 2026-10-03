@@ -209,7 +209,8 @@ def _zip_source(data: bytes, doc: Document, depth: int) -> _Source:
             return source
         raise ValueError("not a CollaNote note: no note JSON and no .cpage pages in the archive")
     if others:
-        doc.warn(f"The archive holds {len(others) + 1} notes; only {prefix.rstrip('/') or 'the top-level one'} was read")
+        kept = prefix.rstrip("/") or "the top-level one"
+        doc.warn(f"The archive holds {len(others) + 1} notes; only {kept} was read")
     members = {n[len(prefix):]: n for n in archive.names if n.startswith(prefix) and "/" not in n[len(prefix):]}
     note: Dict[str, Any] = {}
     manifest = None
@@ -266,7 +267,8 @@ def _json_source(data: bytes, doc: Document) -> _Source:
             note = {}
         else:
             raise ValueError("not a CollaNote note: the JSON holds no pages")
-    doc.warn("This is an early single-file CollaNote note; that layout is read on a best-effort basis (no sample was verified)")
+    doc.warn("This is an early single-file CollaNote note; that layout is read on a best-effort basis "
+             "(no sample was verified)")
     return _Source(note=note, pages=[(i, (lambda p=p: p)) for i, p in enumerate(pages)], pdfs={})
 
 
@@ -362,7 +364,9 @@ def _style(raw: Optional[bytes]) -> Tuple[float, Tuple[float, float, float, floa
     color = _color(color_field.value if color_field is not None and color_field.wire_type == protobuf.WIRE_LEN
                    else None)  # type: ignore[arg-type]
     ink = protobuf.get(fields, 3)
-    ink_type = int(ink.value) if ink is not None and ink.wire_type == protobuf.WIRE_VARINT else 0  # type: ignore[arg-type]
+    ink_type = 0
+    if ink is not None and ink.wire_type == protobuf.WIRE_VARINT:
+        ink_type = int(ink.value)  # type: ignore[arg-type]
     return width, color, ink_type
 
 
@@ -534,14 +538,16 @@ def _attributed_text(data: bytes) -> Optional[Tuple[str, List[TextRun]]]:
         entries = archive.dictionary(attrs)
         font = archive.deref(entries.get("NSFont"))
         name = archive.string(archive.get(font, "NSName")) or archive.string(archive.get(font, "UIFontName"))
-        size = archive.number(archive.get(font, "NSSize"), 0.0) or archive.number(archive.get(font, "UIFontPointSize"), 0.0)
+        size = (archive.number(archive.get(font, "NSSize"), 0.0)
+                or archive.number(archive.get(font, "UIFontPointSize"), 0.0))
         bold, italic = _font_style(name, archive.integer(archive.get(font, "UIFontTraits"), 0))
         color = color_from_uicolor(archive, entries.get("NSColor"))
         underline = archive.integer(entries.get("NSUnderline"), 0) != 0
         piece = _utf16_slice(text, start, length) if len(spans) > 1 else text
+        rgba = tuple(min(1.0, max(0.0, c)) for c in color) if color else None
         runs.append(TextRun(piece, bold=bold, italic=italic, underline=underline, font=name,
                             size=size if size > 0 and math.isfinite(size) else None,
-                            color=tuple(min(1.0, max(0.0, c)) for c in color) if color else None))  # type: ignore[arg-type]
+                            color=rgba))  # type: ignore[arg-type]
     return text, runs
 
 
@@ -689,7 +695,8 @@ class _Reader:
                 try:
                     data = _b64(candidate)
                 except _TooLarge:
-                    self.warn(f"Embedded PDF {index} is larger than {MAX_BLOB_BYTES // (1024 * 1024)} MB and was skipped")
+                    self.warn(f"Embedded PDF {index} is larger than {MAX_BLOB_BYTES // (1024 * 1024)} MB "
+                              "and was skipped")
                     return None
                 if data is not None and data.lstrip()[:5] == b"%PDF-":
                     return data
@@ -717,7 +724,8 @@ class _Reader:
             try:
                 info = self.page(number, data, width, height, paper)
             except Exception as exc:  # noqa: BLE001 - one damaged page must not lose the note
-                self.warn(f"Page {number} could not be read ({exc.__class__.__name__}) and was replaced by a blank page")
+                self.warn(f"Page {number} could not be read ({exc.__class__.__name__}) and was replaced by "
+                          "a blank page")
                 s = self.blank_scale or 1.0
                 info = _PageInfo(Page(width=width * s, height=height * s, paper=paper), None,
                                  final=self.blank_scale is not None)
@@ -730,7 +738,8 @@ class _Reader:
                 doc.pdfs[str(index)] = data
         unused = sorted(i for i in self.source.pdfs if i not in self._pdf_info)
         if unused:
-            self.warn(f"Imported PDF(s) {', '.join(f'{i}.pdf' for i in unused)} are not shown on any page and were dropped")
+            names = ", ".join(f"{i}.pdf" for i in unused)
+            self.warn(f"Imported PDF(s) {names} are not shown on any page and were dropped")
         self.report()
         if not doc.pages:
             self.warn("The note has no pages")
@@ -774,7 +783,8 @@ class _Reader:
             return None
         pw, ph = sizes[page_index]
         if not (0 < pw <= MAX_PDF_SIDE and 0 < ph <= MAX_PDF_SIDE):
-            self.warn(f"Page {number} shows a page of {pdf_index}.pdf whose size is unusable; it was read as a blank page")
+            self.warn(f"Page {number} shows a page of {pdf_index}.pdf whose size is unusable; "
+                      "it was read as a blank page")
             return None
         return pdf_index, page_index, pw, ph
 
@@ -915,7 +925,8 @@ class _Reader:
             except Exception as exc:  # noqa: BLE001 - one damaged attachment must not lose the page
                 self.warn(f"Page {number}: an unreadable attachment was skipped ({exc.__class__.__name__})")
 
-    def frame(self, item: Dict[str, Any], width: float, height: float) -> Optional[Tuple[float, float, float, float, float]]:
+    def frame(self, item: Dict[str, Any], width: float,
+              height: float) -> Optional[Tuple[float, float, float, float, float]]:
         """``(x, y, w, h, rotation)`` in canvas units (top-left corner of the unrotated box)."""
         center = _pair(item.get("center"))
         bound = item.get("bound")

@@ -80,7 +80,7 @@ SPARSE: Dict[str, Tuple[str, ...]] = {
 # name -> (URL at a pinned commit, SHA-256, size in bytes); see the module docstring.
 LARGE_FILES: Dict[str, Tuple[str, str, int]] = {
     # Kinjalrk2k/100-Days-of-Machine-Learning-Campus-X @ 22642ef, _backup/Notes.cnote (Git LFS,
-    # no licence; test input only): a 112-page CollaNote notebook on blank paper.
+    # no licence; test input only): a 112-page CollaNote notebook on lined paper, without PDFs.
     "collanote-notebook.cnote": (
         "https://media.githubusercontent.com/media/Kinjalrk2k/100-Days-of-Machine-Learning-Campus-X/"
         "22642ef38b5c61baa48446cb406ebd56c0870f2b/_backup/Notes.cnote",
