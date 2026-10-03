@@ -935,6 +935,8 @@ def test_build_members_matches_zip(written):
 
 PFG_SCRIPT = r"""
 import json, sys
+import oracle_shims
+oracle_shims.frame_parser_for_goodnotes()
 from goodnotes_re import GoodNotesDocument
 out = []
 with GoodNotesDocument.open(sys.argv[1]) as doc:
@@ -953,6 +955,8 @@ print(json.dumps(out))
 
 GOODPARSE_SCRIPT = r"""
 import json, sys
+import oracle_shims
+oracle_shims.guard_goodparse()
 from goodparse import parse_goodnotes
 d = parse_goodnotes(sys.argv[1])
 out = []
@@ -967,8 +971,9 @@ print(json.dumps(out))
 
 
 def run_oracle(samples, repo: str, src: str, script: str, path: Path) -> Any:
+    """``script``'s JSON output for ``path``; the scripts call tests/oracle_shims.py first."""
     root = samples.repo(repo) / src
-    env = dict(os.environ, PYTHONPATH=str(root))
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(root), str(Path(__file__).resolve().parent)]))
     proc = subprocess.run([sys.executable, "-c", script, str(path)], env=env, capture_output=True, text=True,
                           timeout=300)
     if proc.returncode != 0:

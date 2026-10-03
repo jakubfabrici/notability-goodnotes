@@ -401,6 +401,8 @@ def test_goodnotes_to_notability_widths_and_pressure_flag(samples) -> None:
 
 PFG_SCRIPT = r"""
 import json, sys
+import oracle_shims
+oracle_shims.frame_parser_for_goodnotes()
 from goodnotes_re import GoodNotesDocument
 out = []
 with GoodNotesDocument.open(sys.argv[1]) as doc:
@@ -415,9 +417,10 @@ print(json.dumps(out))
 
 
 def run_parser_for_goodnotes(samples, path: Path) -> List[Dict[str, Any]]:
-    """parser-for-goodnotes' view of ``path`` from a subprocess with its own PYTHONPATH."""
+    """parser-for-goodnotes' view of ``path`` from a subprocess with its own PYTHONPATH
+    (the script calls tests/oracle_shims.py first)."""
     root = samples.repo("parser-for-goodnotes") / "src"
-    env = dict(os.environ, PYTHONPATH=str(root))
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(root), str(Path(__file__).resolve().parent)]))
     proc = subprocess.run([sys.executable, "-c", PFG_SCRIPT, str(path)], env=env,
                           capture_output=True, text=True, timeout=600)
     if proc.returncode != 0:
