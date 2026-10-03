@@ -349,9 +349,9 @@ event synthesis, inkref's confirmed stroke encoding):
     (§5.1).
   * `Image.rotation`: GoodNotes has no verified rotation field (`#3.#3` is never written). A
     JPEG whose EXIF orientation prescribes the same quarter-turn (6 → 90, 3 → 180, 8 → 270) is
-    written unchanged with `#2`/`#3` = the **displayed** box (w/h swapped about the centre for
-    90/270), exactly as GoodNotes stores EXIF photos (§5.3); one counted warning. Every other
-    rotation is dropped with a counted warning.
+    written unchanged with `#2`/`#3` = the model's box, which for such a photo already is the
+    **displayed** box (§4.1), exactly as GoodNotes stores EXIF photos (§5.3); one counted
+    warning. Every other rotation is dropped with a counted warning.
   * `TextBox.align` "center"/"right" → `\qc`/`\qr` in the RTF paragraph header;
     `TextBox.rotation` is dropped with a counted warning.
   * Container: schema stays 24 everywhere (`goodnotes-v35-binding.md` §12); `document.info.pb`

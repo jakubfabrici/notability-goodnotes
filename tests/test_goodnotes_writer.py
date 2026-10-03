@@ -802,9 +802,11 @@ def test_pdf_sticker_image():
     assert pb.varint_value(kinds[0]) == 1 and kinds[1] is None
 
 
-def test_exif_rotated_jpeg_keeps_bytes_and_gets_the_displayed_box():
-    photo = exif_jpeg(6, 96, 64)  # landscape pixels, EXIF says "rotate 90 degrees clockwise"
-    image = Image(100, 50, 96, 64, photo, "jpeg", rotation=90.0)
+def test_exif_rotated_jpeg_keeps_bytes_and_its_displayed_box():
+    # landscape pixels, EXIF says "rotate 90 degrees clockwise": the model's box already is the
+    # displayed (portrait) box, as the GoodNotes reader produces it (design.md 4.1)
+    photo = exif_jpeg(6, 96, 64)
+    image = Image(116, 34, 64, 96, photo, "jpeg", rotation=90.0)
     assert displayed_box(image) == pytest.approx((116, 34, 64, 96))
     doc = Document(pages=[Page(GN_W, GN_H, images=[image])])
     members = members_of(write_goodnotes(doc, Opts()))
@@ -818,10 +820,10 @@ def test_exif_rotated_jpeg_keeps_bytes_and_gets_the_displayed_box():
     assert pb.get(crop, 3) is None  # no #3.#3 rotation: unverified, never written
     assert members["attachments/" + pb.string_value(pb.get(body, 4))] == photo
     assert any("EXIF" in w for w in doc.warnings) and not any("dropped" in w for w in doc.warnings)
-    # 270 degrees with orientation 8, 180 with 3: box swapped / unchanged
-    assert displayed_box(Image(100, 50, 96, 64, exif_jpeg(8, 96, 64), rotation=270.0)) == pytest.approx((116, 34, 64, 96))
+    # 270 degrees with orientation 8, 180 with 3, -270 with 6: the box stays as it is
+    assert displayed_box(Image(116, 34, 64, 96, exif_jpeg(8, 96, 64), rotation=270.0)) == pytest.approx((116, 34, 64, 96))
     assert displayed_box(Image(100, 50, 96, 64, exif_jpeg(3, 96, 64), rotation=180.0)) == pytest.approx((100, 50, 96, 64))
-    assert displayed_box(Image(100, 50, 96, 64, exif_jpeg(6, 96, 64), rotation=-270.0)) == pytest.approx((116, 34, 64, 96))
+    assert displayed_box(Image(116, 34, 64, 96, exif_jpeg(6, 96, 64), rotation=-270.0)) == pytest.approx((116, 34, 64, 96))
 
 
 def test_image_rotation_without_matching_exif_is_dropped():

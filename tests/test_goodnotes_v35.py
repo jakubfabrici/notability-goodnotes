@@ -352,6 +352,21 @@ def test_exif_rotated_photo(samples):
     assert all(im.rotation == 0.0 for im in ex3.pages[0].images)
 
 
+def test_exif_rotated_photo_survives_a_goodnotes_round_trip(samples):
+    """The writer keeps the displayed box the reader produced: the portrait photo of Test9
+    stays portrait (it used to come back turned to 349 x 196 pt)."""
+    from gnnote.convert import Options
+    from gnnote.goodnotes.writer import write_goodnotes
+
+    page = _read(samples, "Test9").pages[3]
+    im = page.images[0]
+    back = read_goodnotes(write_goodnotes(Document(title="EXIF", pages=[page]), Options()))
+    again = back.pages[0].images[0]
+    assert again.rotation == im.rotation == 90.0 and again.data == im.data
+    assert (again.x, again.y, again.w, again.h) == pytest.approx((im.x, im.y, im.w, im.h), abs=0.01)
+    assert again.h > again.w  # portrait, as GoodNotes shows it
+
+
 def _jpeg_with_exif(tiff: bytes) -> bytes:
     app1 = b"Exif\x00\x00" + tiff
     return b"\xff\xd8" + b"\xff\xe1" + struct.pack(">H", len(app1) + 2) + app1 + b"\xff\xd9"
