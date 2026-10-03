@@ -39,3 +39,11 @@ implementation written from the byte-level research notes in `docs/`.
   2025 nebo-ocr contributors). Facts about Kobo notebooks come from **kollate**
   (https://github.com/andrew-lawlor/kollate, GPL-3.0) and **KoboNotebookPlus**
   (https://github.com/MRoiban/KoboNotebookPlus, no licence); no code from either was used.
+* **Flexcil** (`gnnote/flexcil/`, `docs/flexcil.md`): the container layout, the point
+  encoding, the text-frame convention and the shape types are facts documented or implemented
+  by **flexcil-codex-plugin** (https://github.com/jeonghyeon-net/flexcil-codex-plugin, MIT,
+  Copyright (c) 2026 Flexcil Codex Plugin contributors), **flexcil-backup-viewer**
+  (https://github.com/janptn/flexcil-backup-viewer, MIT, Copyright (c) 2026 Jan Pultin) and
+  **FWebViewer** (https://github.com/c0lbarator/FWebViewer, MIT, Copyright (c) 2025 Zaripov
+  Bulat). The reader was written from those facts and the sample file; no code was copied.
+  flexcil-codex-plugin's codec runs only as a separate-process test oracle.

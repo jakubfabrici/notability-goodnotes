@@ -61,6 +61,7 @@ gnnote/
   readutil.py            bounded ZIP / JSON helpers shared by the other apps' readers
   nebo/bink.py           MyScript BINK ink -> strokes + tag table
   nebo/reader.py         read_nebo(data: bytes) -> Document            (MyScript Notes / Nebo, read only)
+  flexcil/reader.py      read_flexcil(data: bytes, document=None) -> Document  (Flexcil .flx / .flex, read only)
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
   server.py              stdlib HTTP server: static web UI + POST /api/convert
@@ -108,6 +109,8 @@ gnnote.goodnotes.writer.write_goodnotes(doc: Document, options: Options) -> byte
 gnnote.notability.reader.read_note(data: bytes) -> Document
 gnnote.notability.writer.write_note(doc: Document, options: Options) -> bytes
 gnnote.nebo.reader.read_nebo(data: bytes) -> Document                 # read only
+gnnote.flexcil.reader.read_flexcil(data: bytes, document=None) -> Document   # read only
+gnnote.flexcil.reader.list_flexcil_documents(data: bytes) -> List[FlexcilEntry]
 ```
 
 Every format is one entry of `gnnote/formats.py` (`FORMATS`): id, name, extensions, a content
@@ -364,6 +367,8 @@ Their byte layouts, mappings and open questions are in their own notes:
 
 * MyScript Notes / Nebo `.nebo`: `docs/nebo.md` (BINK ink with pen classes, colours and the
   pressure width law; the BDOM layout data is not decoded).
+* Flexcil `.flx` / `.flex`: `docs/flexcil.md` (width-normalised ink, shapes as strokes, PDF
+  backgrounds, text boxes, images; one document per backup).
 
 ## 5. Web UI (`web/`)
 

@@ -33,5 +33,17 @@ export const FORMATS = [
     "readable": true,
     "writable": false,
     "defaultTarget": "notability"
+  },
+  {
+    "id": "flexcil",
+    "name": "Flexcil",
+    "extension": ".flx",
+    "inputExtensions": [
+      ".flx",
+      ".flex"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
   }
 ];

@@ -49,12 +49,21 @@ REPOS: Dict[str, Tuple[str, str]] = {
                  "f16eb8d2a425637aab629e6cc90c00a18f17009f"),
     "denotability": ("https://github.com/miroreo/denotability",
                      "7c44cfd5627b4875b7bcbd262c3997fb130b001e"),
+    # Flexcil: forms.flx (MIT repository); only the top-level files are needed
+    "flexcil-backup-viewer": ("https://github.com/janptn/flexcil-backup-viewer",
+                              "8b1c30f432a34ef315ef669cf5eb87a589ae6394"),
+    # Flexcil: an MIT Python codec, run in a subprocess as a test oracle
+    "flexcil-codex-plugin": ("https://github.com/jeonghyeon-net/flexcil-codex-plugin",
+                             "b04abb543d72031e2c1be2ef7c7fc5bd52585c30"),
 }
 
 # Repositories too large to check out whole: only these directories are checked out (a
 # partial clone without blobs plus a cone-mode sparse checkout, so only their files are
 # downloaded).  Repositories not listed here are checked out completely.
-SPARSE: Dict[str, Tuple[str, ...]] = {}
+SPARSE: Dict[str, Tuple[str, ...]] = {
+    "flexcil-backup-viewer": ("puplic",),  # cone mode adds the top-level files, forms.flx among them
+    "flexcil-codex-plugin": ("plugins/flexcil-codex-plugin/src",),
+}
 
 
 def _samples_root() -> Path:
@@ -200,6 +209,13 @@ class SampleSet:
         files = sorted((self.repo("inkterop") / "core" / "tests" / "fixtures" / "nebo").glob("*.nebo"))
         if not files:
             pytest.skip("no .nebo sample files available")
+        return files
+
+    def flexcil_files(self) -> List[Path]:
+        """Flexcil documents: forms.flx of flexcil-backup-viewer."""
+        files = sorted(p for p in self.repo("flexcil-backup-viewer").glob("*.flx") if p.is_file())
+        if not files:
+            pytest.skip("no .flx sample files available")
         return files
 
     def notability_template(self) -> Path:

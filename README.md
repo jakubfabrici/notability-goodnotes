@@ -21,6 +21,7 @@ app opens as its own.
 | GoodNotes | `.goodnotes` | yes | yes | |
 | Notability | `.note` | yes | yes | |
 | MyScript Notes (Nebo) | `.nebo` | yes | no | `docs/nebo.md` |
+| Flexcil | `.flx`, `.flex` (backup) | yes | no | `docs/flexcil.md` |
 
 `python3 -m gnnote formats` prints the same list. Files of a read-only app convert to
 Notability unless `--to goodnotes` is given.
@@ -58,6 +59,7 @@ Notability files. Nothing here has been checked on a device of the source app.
 | App (files) | Handwriting | Pages and backgrounds | Not converted (one warning each) |
 |---|---|---|---|
 | MyScript Notes / Nebo (`.nebo`; also Kobo notebooks) | Editable ink with the stylesheet's pen widths, colours, Apple Pencil pressure (MyScript's width law) and highlighters | Page size from the file (A4 by default), enlarged to fit ink beyond it | Typed and converted text, typeset shapes, math and images (MyScript's layout data is not decoded) |
+| Flexcil (`.flx`; `.flex` backups: the first document of the library, the others are named in a warning) | Editable ink with per-point widths, colours and highlighters; shapes (lines, rectangles, ellipses, polygons, arcs, arrows) become ink strokes; text boxes and images are kept | Every page keeps its PDF page as a PDF background (Flexcil templates included) | Masking objects, links, audio; lasso transforms and dashes are drawn untransformed and solid; image placement is unverified |
 
 ## Verification status
 
@@ -180,6 +182,7 @@ test with Chromium, once per pull-request change and on pushes to `main`; `pages
 * `docs/notability-format.md`: the `.note` package and its `Session.plist` object graph.
 * `docs/ecosystem.md`: import/export capabilities of both apps, existing tools, licensing.
 * `docs/nebo.md`: MyScript Notes / Nebo packages and BINK ink, and how gnnote maps them.
+* `docs/flexcil.md`: Flexcil documents and backups, and how gnnote maps them.
 * `tests/e2e/README.md`: the browser end-to-end test.
 
 ## Acknowledgements
