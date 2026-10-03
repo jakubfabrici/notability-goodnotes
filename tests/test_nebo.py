@@ -440,3 +440,10 @@ def test_damaged_zip_member_is_reported():
     doc = read_nebo(bytes(data))
     assert len(doc.pages) == 1
     assert any("could not be read" in w for w in doc.warnings) or doc.pages[0].strokes == []
+
+
+def test_problems_of_many_pages_are_reported_once():
+    broken = b"BINK\x00" + b"\xff" * 100  # a header no decoder understands, and no stroke record
+    doc = read_nebo(package({f"p{i}": broken for i in range(7)}))
+    assert [w for w in doc.warnings if w.startswith("Page")] == [
+        "Pages 1, 2, 3, 4, 5 and 2 more: ink header not understood and no stroke found"]

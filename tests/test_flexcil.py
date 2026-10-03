@@ -325,8 +325,8 @@ def test_pdf_backgrounds_and_page_problems():
     assert [p.background is not None for p in doc.pages] == [True, False, False, True, False, True]
     assert list(doc.pdfs) == ["PDF1"] and not any(p.template_is_builtin for p in doc.pages)
     text = "\n".join(doc.warnings)
-    for needle in ("PDF page 4 of PDF1 does not exist", "NOPE is missing", "no usable page frame",
-                   "page rotation(s) were ignored", "differ in size from their PDF page"):
+    for needle in ("Page 2: the PDF page it shows does not exist in PDF1", "Page 3: its PDF background NOPE is missing",
+                   "Page 4: no usable page frame", "page rotation(s) were ignored", "differ in size from their PDF page"):
         assert needle in text
 
 
@@ -488,3 +488,10 @@ def test_size_guard_and_point_budget(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(readutil, "MAX_POINTS", 1)
     doc = read_flexcil(one_stroke_doc("A", "A"))
     assert doc.pages[0].strokes == [] and any("more ink points" in w for w in doc.warnings)
+
+
+def test_per_page_problems_are_reported_once():
+    pages = [page_entry(f"P{i}", pdf="GONE") for i in range(1, 9)]
+    doc = read_flexcil(flx(pages, {}))
+    assert [w for w in doc.warnings if "GONE" in w] == [
+        "Pages 1, 2, 3, 4, 5 and 3 more: its PDF background GONE is missing; the page is plain paper"]

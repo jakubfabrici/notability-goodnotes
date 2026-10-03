@@ -30,7 +30,7 @@ import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..model import RGBA, Document, Page, PdfBackground, Point, Stroke, TextBox, TextRun
-from ..readutil import PointBudget, ZipBundle, load_json
+from ..readutil import PageNotes, PointBudget, ZipBundle, load_json
 from .scene import Glyph, Group, Line, Paragraph, Scene, SceneError, parse_scene
 
 __all__ = ["read_remarkable", "PT_PER_UNIT", "RM2_CANVAS", "PALETTE", "TOOL_NAMES"]
@@ -106,6 +106,7 @@ class _Reader:
         self.budget = PointBudget()
         self.counts: Dict[str, int] = {}
         self.unknown_templates: List[str] = []
+        self.notes = PageNotes()
 
     def count(self, what: str, n: int = 1) -> None:
         self.counts[what] = self.counts.get(what, 0) + n
@@ -115,14 +116,14 @@ class _Reader:
 
     # -- one page --------------------------------------------------------------------------
 
-    def anchors(self, scene: Scene, canvas_h: float) -> Dict[Tuple[int, int], float]:
+    def anchors(self, scene: Scene, paragraphs: List[Paragraph], canvas_h: float) -> Dict[Tuple[int, int], float]:
         """y of every text anchor (paragraph and character ids, top and bottom of the text)."""
         text = scene.text
         if text is None:
             return {TOP_ANCHOR: 0.0, BOTTOM_ANCHOR: canvas_h}
         y = text.pos_y + ANCHOR_OFFSET
         out: Dict[Tuple[int, int], float] = {TOP_ANCHOR: y}
-        for paragraph in text.paragraphs():
+        for paragraph in paragraphs:
             out[paragraph.start_id] = y
             for cid in paragraph.char_ids:
                 out[cid] = y
@@ -135,12 +136,15 @@ class _Reader:
         """Build one page.  ``canvas`` is the notebook canvas (display orientation); ``pdf``
         (pdf_id, page index, width pt, height pt) makes it a PDF-backed page."""
         items: List[Tuple[Any, float, float]] = []  # (line or glyph, dx, dy) in canvas units
+        paragraphs: List[Paragraph] = []
         if scene is not None:
             if scene.unreadable_blocks:
-                self.warn(f"Page {number}: {scene.unreadable_blocks} damaged block(s) skipped")
+                self.notes.add(number, "damaged blocks of the page were skipped")
             if scene.skipped_points:
                 self.count("budget")
-            anchors = self.anchors(scene, canvas[1])
+            if scene.text is not None:
+                paragraphs = scene.text.paragraphs()
+            anchors = self.anchors(scene, paragraphs, canvas[1])
             for value, chain in scene.walk():
                 if any(not g.visible for g in chain):
                     self.count("hidden")
@@ -155,7 +159,7 @@ class _Reader:
                     strokes.append(made)
             elif isinstance(value, Glyph):
                 strokes.extend(self.glyph(value, dx, dy))
-        texts = self.text(scene) if scene is not None else None
+        texts = self.text(scene, paragraphs) if scene is not None else None
         if pdf is not None:
             pdf_id, index, w_pt, h_pt = pdf
             ox, oy = -w_pt / 2.0 / PT_PER_UNIT, 0.0
@@ -212,9 +216,9 @@ class _Reader:
         if kind == "eraser":
             self.count("erasers")
             return None
-        pts = [(p.x + dx, p.y + dy, max(p.width, MIN_WIDTH_UNITS) if p.width < MAX_COORD else MIN_WIDTH_UNITS)
-               for p in line.points
-               if math.isfinite(p.x) and math.isfinite(p.y) and abs(p.x) <= MAX_COORD and abs(p.y) <= MAX_COORD]
+        shifted = ((p.x + dx, p.y + dy, p.width) for p in line.points)
+        pts = [(x, y, max(w, MIN_WIDTH_UNITS) if w < MAX_COORD else MIN_WIDTH_UNITS) for x, y, w in shifted
+               if math.isfinite(x) and math.isfinite(y) and abs(x) <= MAX_COORD and abs(y) <= MAX_COORD]
         if not pts:
             if line.points:
                 self.count("unusable")
@@ -231,20 +235,22 @@ class _Reader:
         out = []
         color = _color(glyph.color, glyph.rgba)
         for x, y, w, h in glyph.rects:
+            x, y = x + dx, y + dy
             if not all(math.isfinite(v) and abs(v) <= MAX_COORD for v in (x, y, w, h)) or h <= 0:
                 continue
-            mid = y + h / 2.0 + dy
-            pts = [(x + dx, mid, h), (x + w + dx, mid, h)]
+            mid = y + h / 2.0
+            pts = [(x, mid, h), (x + w, mid, h)]
             out.append((pts, Stroke(points=[], color=color, kind="highlighter", width=h)))
             self.count("glyphs")
         return out
 
-    def text(self, scene: Scene) -> Optional[Tuple[TextBox, Tuple[float, float]]]:
+    def text(self, scene: Scene, paragraphs: List[Paragraph]) -> Optional[Tuple[TextBox, Tuple[float, float]]]:
         """Typed text as one text box (layout approximated); position in canvas units."""
         text = scene.text
-        if text is None or not all(math.isfinite(v) for v in (text.pos_x, text.pos_y, text.width)):
+        if text is None or not all(math.isfinite(v) and abs(v) <= MAX_COORD
+                                   for v in (text.pos_x, text.pos_y, text.width)):
             return None
-        paragraphs: List[Paragraph] = text.paragraphs()
+        paragraphs = list(paragraphs)
         while paragraphs and not paragraphs[-1].text.strip():
             paragraphs.pop()
         if not any(p.text.strip() for p in paragraphs):
@@ -272,6 +278,7 @@ class _Reader:
     # -- warnings ----------------------------------------------------------------------------
 
     def report(self) -> None:
+        self.notes.emit(self.warn)
         c = self.counts
         if c.get("grown"):
             self.warn(f"{c['grown']} page(s) were enlarged to fit ink drawn outside the canvas")
@@ -387,6 +394,7 @@ def _read_rmdoc(data: bytes, reader: _Reader) -> Document:
                         "its pages are plain paper")
         else:
             reader.warn("The PDF this document annotates is missing from the file; its pages are plain paper")
+    scenes: List[Optional[Scene]] = []
     for number, page in enumerate(pages, 1):
         raw = bundle.read(f"{doc_id}/{page.page_id}.rm")
         scene: Optional[Scene] = None
@@ -394,14 +402,19 @@ def _read_rmdoc(data: bytes, reader: _Reader) -> Document:
             try:
                 scene = parse_scene(raw, reader.budget)
             except SceneError as exc:
-                reader.warn(f"Page {number}: {exc}; its ink was skipped")
-        canvas = _canvas(scene, landscape)
+                reader.notes.add(number, f"{exc}; its ink was skipped")
+        scenes.append(scene)
+    # Pages without a scene (blank ones) or without a recorded paper size share the canvas of
+    # the first page that records one (a Paper Pro document stays Paper Pro sized throughout).
+    sized = next((s for s in scenes if s is not None and s.paper_size is not None), None)
+    for number, (page, scene) in enumerate(zip(pages, scenes), 1):
+        canvas = _canvas(scene if scene is not None and scene.paper_size is not None else sized, landscape)
         pdf_page = None
         if pdf_id is not None and page.redir is not None and 0 <= page.redir < len(pdf_sizes):
             w_pt, h_pt = pdf_sizes[page.redir]
             pdf_page = (pdf_id, page.redir, w_pt, h_pt)
         elif pdf_id is not None and page.redir is not None:
-            reader.warn(f"Page {number}: PDF page {page.redir + 1} does not exist; the page is plain paper")
+            reader.notes.add(number, "the PDF page it shows does not exist; the page is plain paper")
         doc.pages.append(reader.page(number, scene, canvas, pdf_page, page.template))
     for message in (bundle.size_warning("reMarkable"), bundle.failure_warning("reMarkable")):
         if message:

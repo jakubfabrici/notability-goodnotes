@@ -42,8 +42,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from ..model import RGBA, Document, Image, Page, PdfBackground, Point, Stroke, TextBox, TextRun
-from ..readutil import (PointBudget, ZipBundle, ellipse_points, image_format, image_pixel_size, load_json,
-                        num, quad_to_cubic, straight_controls)
+from ..readutil import (PageNotes, PointBudget, ZipBundle, ellipse_points, image_format, image_pixel_size,
+                        load_json, num, quad_to_cubic, straight_controls)
 
 __all__ = ["read_flexcil", "list_flexcil_documents", "FlexcilEntry", "decode_points"]
 
@@ -288,6 +288,7 @@ class _Reader:
         self.counts: Dict[str, int] = {}
         self.pdf_pages: Dict[str, int] = {}
         self.pdf_sizes: Dict[str, List[Tuple[float, float]]] = {}
+        self.notes = PageNotes()
 
     def warn(self, message: str) -> None:
         self.doc.warn(message)
@@ -323,34 +324,37 @@ class _Reader:
         name, index = ref.get("file"), ref.get("index", 0)
         if not isinstance(name, str) or not name or "/" in name or isinstance(index, bool) \
                 or not isinstance(index, int) or index < 0:
-            self.warn(f"Page {number}: unusable PDF background reference ignored")
+            self.notes.add(number, "unusable PDF background reference ignored")
             return None
         if name not in self.pdf_pages:
-            data = self.files.read("attachment/PDF/" + name)
-            if data is None or not data.startswith(b"%PDF-"):
-                self.warn(f"Page {number}: its PDF background {name} is missing; the page is plain paper")
-                self.pdf_pages[name] = 0
-                return None
-            sizes: List[Tuple[float, float]] = []
-            try:
-                from .. import pdfutil  # imported lazily: the PDF parser is large
-
-                sizes = [(p.width, p.height) for p in pdfutil.pdf_info(data).pages]
-            except Exception:  # noqa: BLE001 - an unreadable PDF must not stop the reader
-                sizes = []
-            if not sizes:
-                self.warn(f"PDF background {name} could not be read; its pages are plain paper")
-                self.pdf_pages[name] = 0
-                return None
-            self.pdf_pages[name] = len(sizes)
-            self.pdf_sizes[name] = sizes
-            self.doc.pdfs[name] = data
-        if self.pdf_pages[name] == 0:
+            self.pdf_pages[name] = self.load_pdf(name)
+        count = self.pdf_pages[name]
+        if count < 0:
+            self.notes.add(number, f"its PDF background {name} is missing; the page is plain paper")
             return None
-        if index >= self.pdf_pages[name]:
-            self.warn(f"Page {number}: PDF page {index + 1} of {name} does not exist; the page is plain paper")
+        if count == 0:
+            self.notes.add(number, f"its PDF background {name} could not be read; the page is plain paper")
+            return None
+        if index >= count:
+            self.notes.add(number, f"the PDF page it shows does not exist in {name}; the page is plain paper")
             return None
         return PdfBackground(name, index)
+
+    def load_pdf(self, name: str) -> int:
+        """Store ``attachment/PDF/<name>``; its page count, 0 when unreadable, -1 when missing."""
+        data = self.files.read("attachment/PDF/" + name)
+        if data is None or not data.startswith(b"%PDF-"):
+            return -1
+        try:
+            from .. import pdfutil  # imported lazily: the PDF parser is large
+
+            sizes = [(p.width, p.height) for p in pdfutil.pdf_info(data).pages]
+        except Exception:  # noqa: BLE001 - an unreadable PDF must not stop the reader
+            sizes = []
+        if sizes:
+            self.pdf_sizes[name] = sizes
+            self.doc.pdfs[name] = data
+        return len(sizes)
 
     def page(self, number: int, entry: Dict[str, Any]) -> Page:
         frame = entry.get("frame") if isinstance(entry.get("frame"), dict) else {}
@@ -361,7 +365,7 @@ class _Reader:
                 w, h = self.pdf_sizes[background.pdf_id][background.page_index]
             else:
                 w, h = DEFAULT_FRAME
-            self.warn(f"Page {number}: no usable page frame; {w:g} x {h:g} pt used")
+            self.notes.add(number, f"no usable page frame; {w:g} x {h:g} pt used")
         elif background is not None:
             pw, ph = self.pdf_sizes[background.pdf_id][background.page_index]
             if abs(pw - w) > 1 + 0.01 * w or abs(ph - h) > 1 + 0.01 * h:
@@ -618,6 +622,7 @@ class _Reader:
     # -- warnings ----------------------------------------------------------------------------
 
     def report(self) -> None:
+        self.notes.emit(self.warn)
         c = self.counts
         if c.get("shapes"):
             self.warn(f"{c['shapes']} shape(s) were converted to ink strokes")

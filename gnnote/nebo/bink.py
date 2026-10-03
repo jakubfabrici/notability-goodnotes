@@ -91,6 +91,7 @@ class BinkInk:
     records: int = 0  # stroke records read (erased ones included)
     strokes: List[BinkStroke] = field(default_factory=list)
     erased: int = 0
+    unusable: int = 0  # records skipped for non-finite or far-away coordinates
     tags: List[BinkTag] = field(default_factory=list)
     scanned: bool = False  # True when the header was not understood and records were located by scanning
     problems: List[str] = field(default_factory=list)  # one human-readable line per defect
@@ -214,11 +215,11 @@ def _read_stroke(c: _Cursor, ink: BinkInk, record: int, budget: Optional[PointBu
         n = c.u32()
         if not 0 < n <= MAX_POINTS_PER_STROKE:
             c.pos = start
-            return f"implausible point count {n} in stroke record {record}"
+            return "a stroke record is damaged (implausible point count)"
         c.need(5 * n)
         if not (_plausible(x0) and _plausible(y0)):
             c.pos += 5 * n
-            ink.problems.append(f"stroke record {record} has an unusable start point and was skipped")
+            ink.unusable += 1
             return None
         if budget is not None and not budget.take(n):
             c.pos += 5 * n
@@ -238,19 +239,19 @@ def _read_stroke(c: _Cursor, ink: BinkInk, record: int, budget: Optional[PointBu
         n = c.u32()
         if not 0 < n <= MAX_POINTS_PER_STROKE:
             c.pos = start
-            return f"implausible point count {n} in stroke record {record}"
+            return "a stroke record is damaged (implausible point count)"
         c.need(16 * n)
         coords = struct.unpack_from(f"<{2 * n}f", c.buf, c.pos)
         c.pos += 16 * n  # x/y pairs, then the force and time channels (not used)
         if not all(_plausible(v) for v in coords):
-            ink.problems.append(f"stroke record {record} has unusable coordinates and was skipped")
+            ink.unusable += 1
             return None
         if budget is not None and not budget.take(n):
             return None
         ink.strokes.append(BinkStroke(record, list(coords[0::2]), list(coords[1::2]), None, t0))
         return None
     c.pos = start
-    return f"unknown stroke record type 0x{flags:08x} at record {record}"
+    return f"a stroke record of an unknown type (0x{flags:08x})"
 
 
 def _read_tags(c: _Cursor, ink: BinkInk) -> None:
@@ -321,8 +322,10 @@ def parse_bink(data: bytes, budget: Optional[PointBudget] = None) -> BinkInk:
             if record >= MAX_RECORDS:
                 break
     except _Truncated:
-        stop = f"ink data truncated in stroke record {record}"
+        stop = "the ink data is truncated"
     ink.records = record
+    if ink.unusable:
+        ink.problems.append("stroke records with unusable coordinates were skipped")
     if stop is not None:
         ink.problems.append(stop + "; the rest of the page's ink was not read")
         return ink  # the tag table cannot be located after an unreadable record

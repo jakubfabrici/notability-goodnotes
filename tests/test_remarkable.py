@@ -505,7 +505,8 @@ def test_rmdoc_pdf_pages_follow_redir_and_the_226_dpi_mapping():
     assert first.background.pdf_id in doc.pdfs and not first.template_is_builtin
     assert [(round(p.x, 3), round(p.y, 3)) for p in first.strokes[0].points] == [(306.0, 0.0), (378.0, 72.0)]
     assert inserted.background is None and (inserted.width, inserted.height) == pytest.approx((1404 * S, 1872 * S))
-    assert missing.background is None and any("PDF page 9 does not exist" in w for w in doc.warnings)
+    assert missing.background is None
+    assert "Page 3: the PDF page it shows does not exist; the page is plain paper" in doc.warnings
     epub = dict(content, fileType="epub")
     no_pdf = read_remarkable(rmdoc([("p1", ink)], epub))
     assert no_pdf.pages[0].background is None and any("EPUB" in w for w in no_pdf.warnings)
@@ -581,7 +582,7 @@ def test_truncated_and_mutated_pages_never_raise(samples):
 def test_hostile_blocks_are_bounded():
     huge_block = struct.pack("<IBBBB", 0xFFFFFFF0, 0, 1, 2, 5)
     doc = read_remarkable(HEADER_V6 + huge_block + b"\x00" * 32)
-    assert doc.pages[0].strokes == [] and any("damaged block" in w for w in doc.warnings)
+    assert doc.pages[0].strokes == [] and "Page 1: damaged blocks of the page were skipped" in doc.warnings
     many_points = line_value(17, 0, [(1e30, float("nan"), 2.0, 0.5), (float("inf"), 0.0, 2.0, 0.5)])
     doc = read_remarkable(page([many_points]))
     assert doc.pages[0].strokes == [] and any("unusable coordinates" in w for w in doc.warnings)
@@ -604,7 +605,7 @@ def test_size_guard_and_point_budget(monkeypatch: pytest.MonkeyPatch):
     doc = read_remarkable(ink)
     assert len(doc.pages[0].strokes) == 1 and any("more ink points" in w for w in doc.warnings)
     monkeypatch.setattr(rm_scene, "MAX_POINTS_PER_LINE", 3)
-    assert any("damaged block" in w for w in read_remarkable(ink).warnings)
+    assert any("damaged blocks" in w for w in read_remarkable(ink).warnings)
 
 
 def test_damaged_content_json_is_tolerated():
@@ -617,3 +618,13 @@ def test_damaged_content_json_is_tolerated():
         zf.writestr("d/p.rm", ink)
     doc = read_remarkable(buf.getvalue())
     assert len(doc.pages) == 1 and len(doc.pages[0].strokes) == 1
+
+
+def test_blank_pages_share_the_documents_canvas_and_far_anchors_are_dropped():
+    content = cpages([{"id": "p1", "idx": {"value": "ba"}}, {"id": "p2", "idx": {"value": "bb"}}])
+    pro = page([line_value(17, 0, stroke_pts(0, 10, 10, 20))], paper=(1620, 2160))
+    doc = read_remarkable(rmdoc([("p1", pro), ("p2", None)], content))
+    assert [(round(p.width, 1), round(p.height, 1)) for p in doc.pages] == [(516.1, 688.1), (516.1, 688.1)]
+    far = page([line_value(17, 0, stroke_pts(0, 0, 10, 0))], anchor=((0, 0xFFFFFFFFFFFE), 3.0e38))
+    doc = read_remarkable(far)
+    assert doc.pages[0].strokes == [] and any("unusable coordinates" in w for w in doc.warnings)

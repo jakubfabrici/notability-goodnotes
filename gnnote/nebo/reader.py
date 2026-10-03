@@ -36,7 +36,7 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..model import RGBA, Document, Page, Point, Stroke
-from ..readutil import PointBudget, ZipBundle, load_json, num
+from ..readutil import PageNotes, PointBudget, ZipBundle, load_json, num
 from .bink import MAX_TAG_WORK, BinkError, BinkInk, BinkTag, parse_bink
 
 __all__ = ["read_nebo", "parse_css", "parse_declarations", "MM_TO_PT", "A4_MM"]
@@ -169,6 +169,7 @@ class _Reader:
         self.grown = 0
         self.tag_work = 0
         self.tag_work_exceeded = False
+        self.notes = PageNotes()
 
     def warn(self, message: str) -> None:
         self.doc.warn(message)
@@ -239,11 +240,11 @@ class _Reader:
             try:
                 ink = parse_bink(raw, self.budget)
             except BinkError:
-                self.warn(f"Page {number}: ink.bink is not MyScript ink; the page's ink was skipped")
+                self.notes.add(number, "ink.bink is not MyScript ink; the page's ink was skipped")
                 ink = None
             if ink is not None:
                 for problem in ink.problems:
-                    self.warn(f"Page {number}: {problem}")
+                    self.notes.add(number, problem)
                 css_raw = self.bundle.read(prefix + "style.css")
                 css = parse_css(css_raw.decode("utf-8", "replace")) if css_raw else {}
                 strokes = self.strokes(ink, css)
@@ -352,6 +353,7 @@ class _Reader:
     # -- what is not converted -----------------------------------------------------------
 
     def report(self, rel: Dict[str, Any]) -> None:
+        self.notes.emit(self.warn)
         if self.grown:
             self.warn(f"{self.grown} page(s) were enlarged to fit ink drawn outside the page")
         if self.tag_work_exceeded:

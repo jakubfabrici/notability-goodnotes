@@ -11,6 +11,7 @@ one :class:`ValueError` a reader documents for "not a <format> file".
   ``RecursionError`` of deeply nested input).
 * :func:`num` -- a finite float or a default (JSON ``NaN``/``Infinity``/strings/booleans rejected).
 * :class:`PointBudget` -- caps the number of ink points one document may produce.
+* :class:`PageNotes` -- reports each distinct per-page problem once, with its pages.
 * :func:`image_format` / :func:`image_pixel_size` -- PNG / JPEG / GIF sniffing.
 * :func:`straight_controls`, :func:`ellipse_points`, :func:`quad_to_cubic` -- shape geometry
   shared by readers that turn vector shapes into ink strokes.
@@ -22,12 +23,12 @@ import json
 import math
 import struct
 import zipfile
-from typing import Any, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .model import Point
 
 __all__ = ["MAX_MEMBER_BYTES", "MAX_TOTAL_BYTES", "MAX_POINTS", "ByteBudget", "ZipBundle", "load_json",
-           "num", "PointBudget", "image_format", "image_pixel_size", "straight_controls",
+           "num", "PageNotes", "PointBudget", "image_format", "image_pixel_size", "straight_controls",
            "ellipse_points", "quad_to_cubic", "bbox"]
 
 MAX_MEMBER_BYTES = 256 * 1024 * 1024  # declared (inflated) size above which a ZIP member is skipped
@@ -157,6 +158,29 @@ def num(value: Any, default: Optional[float] = None) -> Optional[float]:
     except (OverflowError, ValueError):
         return default
     return f if math.isfinite(f) else default
+
+
+class PageNotes:
+    """Per-page problems, reported once per distinct message with the pages it concerns
+    ("Pages 3, 4, 9: ..."), so a damaged long document does not flood the warnings."""
+
+    def __init__(self) -> None:
+        self._pages: Dict[str, List[int]] = {}
+
+    def add(self, page: int, message: str) -> None:
+        pages = self._pages.setdefault(message, [])
+        if not pages or pages[-1] != page:
+            pages.append(page)
+
+    def emit(self, warn: Callable[[str], None]) -> None:
+        for message, pages in self._pages.items():
+            if len(pages) == 1:
+                warn(f"Page {pages[0]}: {message}")
+            else:
+                shown = ", ".join(str(p) for p in pages[:5])
+                more = f" and {len(pages) - 5} more" if len(pages) > 5 else ""
+                warn(f"Pages {shown}{more}: {message}")
+        self._pages.clear()
 
 
 class PointBudget:
