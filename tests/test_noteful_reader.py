@@ -436,6 +436,18 @@ def test_backgrounds_templates_and_generated_paper() -> None:
         assert any(fragment in w for w in doc.warnings), fragment
 
 
+def test_generated_paper_is_classified_once_per_pdf(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gnnote.goodnotes import reader as gn_reader
+
+    calls = []
+    real = gn_reader._paper_style
+    monkeypatch.setattr(gn_reader, "_paper_style", lambda data, hint: calls.append(1) or real(data, hint))
+    paper = pdfutil.make_paper_pdf(595.28, 841.89, "dotted")
+    pages = [(f"P{i}", page_record(f"P{i}", f"+E{i}", pdf="GN")) for i in range(30)]
+    doc = read_noteful(build(pages, {"GN": paper}))
+    assert [p.paper for p in doc.pages] == ["dotted"] * 30 and len(calls) == 1
+
+
 def test_notebook_extras_are_reported() -> None:
     audio = b"\x00\x00\x00\x18ftypM4A " + b"\x00" * 20
     pages = [("P1", page_record("P1", "+E1", "ANN1"))]

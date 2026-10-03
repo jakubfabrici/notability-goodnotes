@@ -135,7 +135,7 @@ type — **1 image, 2 text box, 3 rectangle, 6 ellipse, 12 polygon, 20 line, 21 
 | page order | ordering tags | tags in ASCII order |
 | `Page.width / height` | background size × 72/132 | pt × 132/72 |
 | `PdfBackground` | type-1 background; the PDF goes to `Document.pdfs` | type-1 background; one file per `pdf_id` (the source app's stock paper PDFs are carried too) |
-| stock paper | type-2 template: the app's rendered PDF as background, `template_is_builtin`; `paper` from the template name (only "Blank" seen). A one-page PDF produced by gnnote is stock paper too (its ruling is read back as `paper`) | a page without PDF: `pdfutil.make_paper_pdf(w, h, paper)` as a type-1 background (what notesconverter does) |
+| stock paper | type-2 template: the app's rendered PDF as background, `template_is_builtin`; `paper` from the template name (only "Blank" seen). A one-page PDF produced by gnnote (up to 4 MB) is stock paper too (its ruling is read back as `paper`, once per PDF) | a page without PDF: `pdfutil.make_paper_pdf(w, h, paper)` as a type-1 background (what notesconverter does) |
 | ink `Stroke` | polyline, width = 2 r × 72/132 per point, `Stroke.width` from the nominal radius; blend 1 → `highlighter`, alpha × 0.5; `pen` unknown (None) | Bezier strokes flattened (1 pt), r = width / 2 × 132/72, per-point radii when widths vary; highlighter → blend 1, alpha 1.0 |
 | shapes | strokes with exact cubic `controls` (lines as thirds handles, ellipses as 16 arcs, rounded corners as quarter arcs); fill → `kind = "fill"` before its outline; arrow head → a stroke tracing the triangle | — (model shapes arrive as ink) |
 | `kind == "fill"` | — | a filled polygon object per outline ring, coded like the app's filled ellipse |
