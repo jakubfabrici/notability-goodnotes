@@ -80,6 +80,12 @@ def _sniff_notability(data: bytes, names: Optional[List[str]]) -> bool:
     return bool(names) and any(n == "Session.plist" or n.endswith("/Session.plist") for n in names)
 
 
+def _sniff_noteful(data: bytes, names: Optional[List[str]]) -> bool:
+    # not a ZIP: the AA BB CC DE magic opens the file and its 16-byte trailer
+    return names is None and len(data) >= 20 and data[:4] == b"\xaa\xbb\xcc\xde" \
+        and data[-16:-12] == b"\xaa\xbb\xcc\xde"
+
+
 FORMATS: Dict[str, NoteFormat] = {
     f.id: f
     for f in (
@@ -94,6 +100,12 @@ FORMATS: Dict[str, NoteFormat] = {
             input_extensions=(".note",), sniff=_sniff_notability,
             reader="gnnote.notability.reader:read_note",
             writer="gnnote.notability.writer:write_note",
+        ),
+        NoteFormat(
+            id="noteful", name="Noteful", extension=".noteful",
+            input_extensions=(".noteful",), sniff=_sniff_noteful,
+            reader="gnnote.noteful.reader:read_noteful",
+            writer="gnnote.noteful.writer:write_noteful",
         ),
     )
 }

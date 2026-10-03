@@ -142,3 +142,20 @@ def test_zip_names_helper() -> None:
     assert formats.sniff_zip_names(buf.getvalue()) == ["a/Session.plist"]
     assert formats.sniff_zip_names(b"PK broken") is None
     assert formats.sniff_zip_names(b"%PDF-1.4") is None
+
+
+def test_noteful_is_sniffed_from_its_magic_and_trailer() -> None:
+    from gnnote.noteful.writer import write_noteful
+
+    data = write_noteful(Document(title="Sniff", pages=[Page(width=300, height=400)]))
+    noteful = formats.get("noteful")
+    assert noteful.sniff(data, None) and noteful.extension == ".noteful"
+    assert not noteful.sniff(data, ["Session.plist"])  # a ZIP is never a Noteful file
+    assert not noteful.sniff(b"\xaa\xbb\xcc\xde" + b"\x00" * 40, None)  # no trailer magic
+    assert not noteful.sniff(b"\xaa\xbb\xcc\xde", None)
+    assert detect_format("renamed.zip", data) == "noteful"
+    assert detect_format("x.NOTEFUL", b"junk") == "noteful"  # unrecognised content: the extension decides
+    assert detect_format("x.note", data) == "noteful"  # content wins over the extension
+    assert formats.default_target("noteful") == "notability"
+    result = convert(data, "Sniff.noteful", Options(target="goodnotes"))
+    assert (result.source_format, result.filename) == ("noteful", "Sniff.goodnotes")

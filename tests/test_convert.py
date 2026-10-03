@@ -179,7 +179,7 @@ def test_other_format_and_output_filename() -> None:
     assert output_filename("archive.zip", NOTABILITY) == "archive.note"
     assert output_filename(".note", GOODNOTES) == ".note.goodnotes"
     assert output_filename("", NOTABILITY) == "converted.note"
-    assert EXTENSIONS == {GOODNOTES: ".goodnotes", NOTABILITY: ".note"}
+    assert EXTENSIONS == {GOODNOTES: ".goodnotes", NOTABILITY: ".note", "noteful": ".noteful"}
 
 
 def test_options_validation() -> None:

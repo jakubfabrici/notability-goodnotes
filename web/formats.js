@@ -22,5 +22,16 @@ export const FORMATS = [
     "readable": true,
     "writable": true,
     "defaultTarget": "goodnotes"
+  },
+  {
+    "id": "noteful",
+    "name": "Noteful",
+    "extension": ".noteful",
+    "inputExtensions": [
+      ".noteful"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
   }
 ];
