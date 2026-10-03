@@ -24,8 +24,8 @@ OneNote's own curve is undocumented, so widths are an approximation.
 from __future__ import annotations
 
 import struct
-from itertools import accumulate
-from typing import Any, Dict, List, Optional, Tuple
+from itertools import accumulate, islice, repeat
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..model import Point, Stroke
 from .common import Damaged, ObjectSpace, guid_bytes, p_bool, p_bytes, p_f32, p_ref, p_refs, p_u8, p_u32
@@ -38,6 +38,8 @@ GUID_Y = guid_bytes("{B53F9F75-04E0-4498-A7EE-C30DBB5A9011}")
 GUID_PRESSURE = guid_bytes("{7307502D-F9F4-4E18-B3F2-2CE1B1A3610C}")
 
 MAX_POINTS = 4_000_000  # points one document may hold (a dense section has ~10^5)
+BYTES_PER_POINT = 2  # a point needs at least a byte per coordinate; real files use 11 or more
+STROKE_COST = 2  # what a stroke costs on top of its points (its own memory, in points)
 RASTER_OP_MASK_PEN = 9
 PEN_TIP_RECTANGLE = 1
 MIN_WIDTH_PT = 0.1
@@ -50,11 +52,25 @@ class OverBudget(Damaged):
 
 
 class InkBudget:
-    """Counts decoded points across a document so a crafted file cannot exhaust memory."""
+    """Counts decoded points across a document so a crafted file cannot exhaust memory.
+
+    A document may hold ``MAX_POINTS`` points, and no more than its files could store
+    without repeating themselves: :meth:`grant` adds one point per ``BYTES_PER_POINT`` bytes
+    of every section read (a crafted file can make one stroke's data count many times).
+    Without grants (``limit`` given) the budget is simply ``limit`` points.
+    """
 
     def __init__(self, limit: Optional[int] = None):
-        self.left = MAX_POINTS if limit is None else limit
+        self.cap = MAX_POINTS if limit is None else limit
+        self.left = 0 if limit is None else limit
+        self.granted = self.left
         self.exhausted = False
+
+    def grant(self, size: int) -> None:
+        """Room for the points a section of ``size`` bytes can hold."""
+        n = max(0, min(size // BYTES_PER_POINT, self.cap - self.granted))
+        self.granted += n
+        self.left += n
 
     def take(self, n: int) -> bool:
         if n > self.left:
@@ -210,28 +226,29 @@ def _stroke(values: List[int], pen: _Pen, t: InkTransform, budget: InkBudget, st
     if len(values) % n_dims:
         stats["unreadable"] = stats.get("unreadable", 0) + 1
         return None
-    if not budget.take(count):
+    if not budget.take(count + STROKE_COST):
         return None
 
-    def channel(index: int) -> List[int]:
-        return list(accumulate(values[index * count:(index + 1) * count]))
+    def channel(index: int) -> Iterable[int]:  # absolute values, without copying the channel
+        return accumulate(islice(values, index * count, (index + 1) * count))
+
+    def pressure_widths(raw: Iterable[int], lo: int, span: float) -> Iterable[float]:
+        for p in raw:
+            q = (p - lo) / span
+            q = 0.0 if q < 0.0 else (1.0 if q > 1.0 else q)
+            yield base * (1.5 * q + 0.25)
 
     xs = channel(guids.index(GUID_X))
     ys = channel(guids.index(GUID_Y))
-    widths: List[float]
+    widths: Iterable[float]
     base = pen.width
     if GUID_PRESSURE in guids and not pen.ignore_pressure:
         _g, lo, hi = dims[guids.index(GUID_PRESSURE)]
         span = float(hi - lo) if hi > lo else 32767.0
-        lo = lo if hi > lo else 0
-        widths = []
-        for p in channel(guids.index(GUID_PRESSURE)):
-            q = (p - lo) / span
-            q = 0.0 if q < 0.0 else (1.0 if q > 1.0 else q)
-            widths.append(base * (1.5 * q + 0.25))
+        widths = pressure_widths(channel(guids.index(GUID_PRESSURE)), lo if hi > lo else 0, span)
         stats["pressure"] = stats.get("pressure", 0) + 1
     else:
-        widths = [base] * count
+        widths = repeat(base, count)
     x0, y0, sx, sy = t.x0, t.y0, t.sx * S.HIMETRIC_PT, t.sy * S.HIMETRIC_PT
     points = [Point(x0 + sx * x, y0 + sy * y, w) for x, y, w in zip(xs, ys, widths)]
     kind = "highlighter" if pen.highlighter else "pen"

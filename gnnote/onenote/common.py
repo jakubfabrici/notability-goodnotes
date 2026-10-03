@@ -5,8 +5,14 @@ implement.
 Everything here is written from the published [MS-ONESTORE] specification (Open
 Specification Promise).  Every read is bounded by the bytes that are really there: a count
 or length taken from the file is checked against the remaining input before anything is
-allocated, so a crafted file cannot make the reader allocate more than a small multiple of
-its own size.
+allocated.  That alone does not bound the cost of a crafted file, which can pack millions of
+tiny structures into a few megabytes or refer to one structure from many places, so the
+readers also count their costs in two kinds of :class:`Budget`:
+
+* the document's work budget bounds time: about one unit per microsecond (a file node or a
+  stream object costs 1, applying or decoding an object 10);
+* every object space (page) has a memory budget: about one unit per hundred bytes it keeps
+  (objects, references, properties, revisions).
 """
 from __future__ import annotations
 
@@ -15,9 +21,10 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 __all__ = [
-    "OneNoteError", "Damaged", "Encrypted", "ExtGuid", "NIL", "guid_bytes", "guid_str", "Buf",
-    "Obj", "ObjectSpace", "Store", "decode_object_propset", "MAX_PROPSET_DEPTH",
-    "FILE_TYPE_ONE", "FILE_TYPE_ONETOC2", "FORMAT_NATIVE", "FORMAT_PACKAGE",
+    "OneNoteError", "Damaged", "Encrypted", "TooLarge", "Budget", "ExtGuid", "NIL", "guid_bytes",
+    "guid_str", "Buf", "Obj", "ObjectSpace", "Store", "decode_object_propset", "MAX_PROPSET_DEPTH",
+    "MAX_WORK", "MIN_WORK", "WORK_PER_BYTE", "OBJECT_WORK", "MAX_SPACE_ITEMS", "FILE_TYPE_ONE",
+    "FILE_TYPE_ONETOC2", "FORMAT_NATIVE", "FORMAT_PACKAGE",
 ]
 
 
@@ -31,6 +38,39 @@ class Damaged(OneNoteError):
 
 class Encrypted(OneNoteError):
     """The section is password protected; its content is never decoded."""
+
+
+class TooLarge(OneNoteError):
+    """Reading on would cost more time or memory than one document may (see :class:`Budget`)."""
+
+
+# Work (time): a document starts with MIN_WORK units and every file it reads adds
+# WORK_PER_BYTE units per byte, up to MAX_WORK.  Real files need well under 0.2 units per
+# byte, so only a file that makes its structures count many times runs out.
+MIN_WORK = 2_000_000
+WORK_PER_BYTE = 1
+MAX_WORK = 30_000_000
+OBJECT_WORK = 10  # applying an object declaration or decoding an object
+# Memory: what one object space (page) may keep.  Real pages keep 30 - 50 units per stroke
+# and at most a few thousand units in all.
+MAX_SPACE_ITEMS = 1_000_000
+VALUE_BYTES_PER_UNIT = 128  # a variable-size property value costs one unit per this many bytes
+
+
+class Budget:
+    """Units left; :class:`TooLarge` once they are spent (``exhausted`` then stays set)."""
+
+    __slots__ = ("left", "exhausted")
+
+    def __init__(self, limit: int):
+        self.left = limit
+        self.exhausted = False
+
+    def spend(self, n: int = 1) -> None:
+        self.left -= n
+        if self.left < 0:
+            self.exhausted = True
+            raise TooLarge("the OneNote file is too large or complex to read completely")
 
 
 # An extended GUID ([MS-ONESTORE] 2.2.1): the 16 GUID bytes as stored (little-endian
@@ -151,10 +191,15 @@ class Obj:
 
 
 class ObjectSpace:
-    """The current revision (default context, revision role 1) of one object space."""
+    """The current revision (default context, revision role 1) of one object space.
 
-    def __init__(self, key: Any):
+    ``budget`` is the memory the space may still fill (what opening it kept was counted
+    against it); an object that does not fit any more reads as absent.
+    """
+
+    def __init__(self, key: Any, budget: Optional[Budget] = None):
         self.key = key
+        self.budget = budget if budget is not None else Budget(MAX_SPACE_ITEMS)
         self.roots: Dict[int, ExtGuid] = {}  # root role -> object id
         self.warnings: List[str] = []
 
@@ -170,24 +215,64 @@ class ObjectSpace:
 
 
 class Store:
-    """A whole revision-store file, whatever its packaging."""
+    """A whole revision-store file, whatever its packaging.
+
+    ``work`` is the document's work :class:`Budget` (shared by every file of a notebook).
+    """
 
     file_type: bytes = FILE_TYPE_ONE
     encrypted: bool = False
 
-    def __init__(self) -> None:
+    def __init__(self, work: Optional[Budget] = None) -> None:
         self.warnings: List[str] = []
+        self.work = work if work is not None else Budget(MAX_WORK)
+        self._space_cache: Dict[Any, Any] = {}
+
+    def decode(self, space: ObjectSpace, data: Any, start: int, end: int, resolve: "Resolver"
+               ) -> Optional[Dict[int, Any]]:
+        """An object's property set, decoded against both budgets; ``None`` (with a warning)
+        when it is damaged or no longer fits (then the rest of the page reads as absent)."""
+        before = space.budget.left
+        try:
+            self.work.spend(OBJECT_WORK)
+            space.budget.spend(3)  # the object and its property dictionary
+            props = decode_object_propset(data, start, end, resolve, space.budget)
+            self.work.spend(before - space.budget.left)
+            return props
+        except TooLarge:
+            if not self.work.exhausted:
+                self.space_too_large()
+        except Damaged:
+            self.warn_once("Some OneNote objects could not be decoded and were skipped")
+        return None
 
     @property
     def is_toc(self) -> bool:
         return self.file_type == FILE_TYPE_ONETOC2
 
+    def warn_once(self, message: str) -> None:
+        if message not in self.warnings:
+            self.warnings.append(message)
+
     def root_space(self) -> Optional[ObjectSpace]:  # pragma: no cover - interface
         raise NotImplementedError
 
     def space(self, ref: Any) -> Optional[ObjectSpace]:  # pragma: no cover - interface
-        """The object space an ObjectSpaceID property refers to."""
+        """The object space an ObjectSpaceID property refers to.
+
+        :class:`TooLarge` only when the document's budget is spent; a space that alone is too
+        large reads as ``None`` with a warning.
+        """
         raise NotImplementedError
+
+    def release(self, space: Optional[ObjectSpace]) -> None:
+        """Forget a space once it has been read, so that a section holds one page at a time."""
+        if space is not None:
+            self._space_cache.pop(space.key, None)
+
+    def space_too_large(self) -> None:
+        """Called when a space's own budget ran out (not the document's)."""
+        self.warn_once("Part of a OneNote page is too large or complex to read and was skipped")
 
 
 # ----------------------------------------------------------------------------------
@@ -197,11 +282,13 @@ class Store:
 _FIXED_SIZES = {0x3: 1, 0x4: 2, 0x5: 4, 0x6: 8}
 
 
-def _stream_header(buf: Buf) -> Tuple[List[int], bool, bool]:
+def _stream_header(buf: Buf, budget: Optional[Budget]) -> Tuple[List[int], bool, bool]:
     """One ObjectSpaceObjectStream (header + CompactIDs): (ids, extended, osid_absent)."""
     header = buf.u32()
     count = header & 0xFFFFFF
     buf.need(4 * count)
+    if budget is not None:
+        budget.spend(count)
     data, pos = buf.data, buf.pos
     ids = [int.from_bytes(data[pos + 4 * i:pos + 4 * i + 4], "little") for i in range(count)]
     buf.pos = pos + 4 * count
@@ -211,24 +298,25 @@ def _stream_header(buf: Buf) -> Tuple[List[int], bool, bool]:
 Resolver = Callable[[List[int], List[int], List[int]], Tuple[List[Any], List[Any], List[Any]]]
 
 
-def decode_object_propset(data: Any, start: int, end: int, resolve: Resolver) -> Dict[int, Any]:
+def decode_object_propset(data: Any, start: int, end: int, resolve: Resolver,
+                          budget: Optional[Budget] = None) -> Dict[int, Any]:
     """Decode an ObjectSpaceObjectPropSet held in ``data[start:end]``.
 
     ``resolve(oid_cids, osid_cids, context_cids)`` turns the CompactIDs of the OIDs, OSIDs
     and ContextIDs streams into references: the native packaging looks them up in a global
     identification table, the FSSHTTPB packaging pairs them with the Object Data arrays
-    ([MS-ONESTORE] 2.7.8).
+    ([MS-ONESTORE] 2.7.8).  Every reference and property counts against ``budget``.
     """
     buf = Buf(data, start, end)
-    oid_ids, _ext, osid_absent = _stream_header(buf)
+    oid_ids, _ext, osid_absent = _stream_header(buf, budget)
     osid_ids: List[int] = []
     ctx_ids: List[int] = []
     if not osid_absent:
-        osid_ids, ext2, _ = _stream_header(buf)
+        osid_ids, ext2, _ = _stream_header(buf, budget)
         if ext2:
-            ctx_ids, _, _ = _stream_header(buf)
+            ctx_ids, _, _ = _stream_header(buf, budget)
     oids, osids, ctxs = resolve(oid_ids, osid_ids, ctx_ids)
-    return _decode_propset(buf, (_Refs(oids), _Refs(osids), _Refs(ctxs)), 0)
+    return _decode_propset(buf, (_Refs(oids), _Refs(osids), _Refs(ctxs)), 0, budget)
 
 
 class _Refs:
@@ -255,11 +343,14 @@ class _Refs:
         return v
 
 
-def _decode_propset(buf: Buf, streams: Tuple[_Refs, _Refs, _Refs], depth: int) -> Dict[int, Any]:
+def _decode_propset(buf: Buf, streams: Tuple[_Refs, _Refs, _Refs], depth: int,
+                    budget: Optional[Budget]) -> Dict[int, Any]:
     if depth > MAX_PROPSET_DEPTH:
         raise Damaged("property sets nested too deeply")
     count = buf.u16()
     buf.need(4 * count)
+    if budget is not None:
+        budget.spend(count + 1)  # the properties and the set itself (an empty nested set costs too)
     data, pos = buf.data, buf.pos
     prids = [int.from_bytes(data[pos + 4 * i:pos + 4 * i + 4], "little") for i in range(count)]
     buf.pos = pos + 4 * count
@@ -276,7 +367,11 @@ def _decode_propset(buf: Buf, streams: Tuple[_Refs, _Refs, _Refs], depth: int) -
         elif kind in _FIXED_SIZES:
             value = buf.take(_FIXED_SIZES[kind])
         elif kind == 0x7:
-            value = buf.take(buf.u32())
+            n = buf.u32()
+            buf.need(n)
+            if budget is not None:
+                budget.spend(n // VALUE_BYTES_PER_UNIT)  # the copy is kept with the object
+            value = buf.take(n)
         elif kind == 0x8:
             value = oids.one()
         elif kind == 0x9:
@@ -297,9 +392,9 @@ def _decode_propset(buf: Buf, streams: Tuple[_Refs, _Refs, _Refs], depth: int) -
                 if n > buf.remaining() // 2:  # every nested set is at least 2 bytes
                     raise Damaged("property value array longer than its data")
                 for _ in range(n):
-                    value.append(_decode_propset(buf, streams, depth + 1))
+                    value.append(_decode_propset(buf, streams, depth + 1, budget))
         elif kind == 0x11:
-            value = _decode_propset(buf, streams, depth + 1)
+            value = _decode_propset(buf, streams, depth + 1, budget)
         else:
             raise Damaged(f"unknown property type {kind:#x} in property {prid:#010x}")
         out[key] = value

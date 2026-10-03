@@ -17,16 +17,22 @@ Structure (offsets and field layouts from the specification):
   effect where they are declared.
 
 Objects are decoded lazily: only the objects the MS-ONE layer asks for are turned into
-property sets, and superseded revisions are never read.
+property sets, and superseded revisions are never read.  File node lists are read as they
+are walked, never kept: every node counts against the document's work budget, and every
+node, declaration and decoded property of an object space against the space's budget.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from .common import (
-    FILE_TYPE_ONE, FILE_TYPE_ONETOC2, FORMAT_NATIVE, NIL, Buf, Damaged, Encrypted, ExtGuid, Obj,
-    ObjectSpace, OneNoteError, Store, decode_object_propset, guid_bytes,
+    FILE_TYPE_ONE, FILE_TYPE_ONETOC2, FORMAT_NATIVE, MAX_SPACE_ITEMS, NIL, Budget, Buf, Damaged, Encrypted,
+    ExtGuid, Obj, ObjectSpace, OneNoteError, Store, TooLarge, guid_bytes,
 )
+
+# what keeping one costs in a space's memory budget (about 100 bytes per unit)
+REVISION_COST = 6  # a revision and its tables
+DECLARATION_COST = 3  # an object declaration and its entry
 
 __all__ = ["NativeStore"]
 
@@ -37,7 +43,6 @@ STP_NIL = 0xFFFFFFFFFFFFFFFF
 FILE_DATA_HEADER = guid_bytes("{BDE316E7-2665-4511-A4C4-8D4D0B7A9EAC}")
 
 MAX_FRAGMENTS = 100_000  # fragments of one file node list
-MAX_NODES = 5_000_000  # FileNodes read from one file in total
 MAX_REVISION_CHAIN = 10_000
 
 JCID_IS_PROPERTY_SET = 0x00020000
@@ -136,8 +141,8 @@ def _resolve(cid: int, table: Dict[int, bytes]) -> Optional[ExtGuid]:
 
 class NativeSpace(ObjectSpace):
     def __init__(self, store: "NativeStore", key: ExtGuid, objects: Dict[ExtGuid, _Decl],
-                 roots: Dict[int, ExtGuid]):
-        super().__init__(key)
+                 roots: Dict[int, ExtGuid], budget: Budget):
+        super().__init__(key, budget)
         self._store = store
         self._objects = objects
         self.roots = dict(roots)
@@ -160,11 +165,7 @@ class NativeSpace(ObjectSpace):
                     return ([_resolve(c, table) for c in oids], [_resolve(c, table) for c in osids],
                             [_resolve(c, table) for c in ctxs])
 
-                try:
-                    props = decode_object_propset(self._store.data, decl.stp, decl.stp + decl.cb, resolve)
-                except Damaged:
-                    self._store.warn_once("Some OneNote objects could not be decoded and were skipped")
-                    props = None
+                props = self._store.decode(self, self._store.data, decl.stp, decl.stp + decl.cb, resolve)
                 if props is not None:
                     obj = Obj(oid, decl.jcid, props)
             else:
@@ -182,8 +183,8 @@ class NativeSpace(ObjectSpace):
 class NativeStore(Store):
     """A native revision store (``guidFileFormat`` = {109ADD3F-...})."""
 
-    def __init__(self, data: bytes):
-        super().__init__()
+    def __init__(self, data: bytes, work: Optional[Budget] = None):
+        super().__init__(work)
         if len(data) < HEADER_SIZE:
             raise OneNoteError("not a OneNote file (shorter than the 1024-byte header)")
         if bytes(data[48:64]) != FORMAT_NATIVE:
@@ -202,20 +203,15 @@ class NativeStore(Store):
         expected = head.u64()
         if expected and expected > len(data):
             self.warn_once("The OneNote file is truncated; content in the missing part is lost")
-        self._nodes_read = 0
         self._counts = self._committed_counts()
         self._spaces: Dict[ExtGuid, Optional[Tuple[int, int]]] = {}  # gosid -> manifest list ref
-        self._space_cache: Dict[ExtGuid, Optional[NativeSpace]] = {}
         self._file_store_ref: Optional[Tuple[int, int]] = None
         self._file_store: Optional[Dict[bytes, Tuple[int, int]]] = None
+        self._file_data: Dict[bytes, Optional[bytes]] = {}
         self.root_gosid: Optional[ExtGuid] = None
         self._read_root_list()
 
     # ------------------------------------------------------------------ helpers
-
-    def warn_once(self, message: str) -> None:
-        if message not in self.warnings:
-            self.warnings.append(message)
 
     def _ref(self, buf: Buf, stp_fmt: int, cb_fmt: int) -> Tuple[int, int]:
         """A FileNodeChunkReference in the formats the FileNode header announces (2.2.4.2)."""
@@ -260,6 +256,7 @@ class NativeStore(Store):
                 if chunk is None or stp in seen or len(seen) >= MAX_FRAGMENTS or cb < 12:
                     break
                 seen.add(stp)
+                self.work.spend(1 + cb // 8)  # one unit per transaction entry
                 data = self.data
                 for pos in range(stp, stp + cb - 12 - 7, 8):
                     src = int.from_bytes(data[pos:pos + 4], "little")
@@ -282,23 +279,25 @@ class NativeStore(Store):
 
     # ------------------------------------------------------------------ file node lists (2.4)
 
-    def _list_nodes(self, stp: int, cb: int) -> List[_Node]:
-        """Every committed FileNode of the file node list starting at ``stp``.
+    def _nodes(self, stp: int, cb: int) -> Iterator[_Node]:
+        """Every committed FileNode of the file node list starting at ``stp``, read as the
+        caller walks them (a list is never kept, however long it is).
 
         A damaged fragment, a node that overruns it or a loop of fragments ends the list
-        with a warning; the nodes read before it are kept.  :class:`Damaged` when not even
-        the first fragment is readable.
+        with a warning; the nodes read before it count.  :class:`Damaged` when not even the
+        first node is readable; :class:`TooLarge` when the document's budget runs out.
         """
-        nodes: List[_Node] = []
+        count = 0
         limit: Optional[int] = None
         list_id: Optional[int] = None
         seen = set()
         data = self.data
+        work = self.work
         try:
             while True:
                 chunk = self._chunk(stp, cb)
                 if chunk is None:
-                    break
+                    return
                 if stp in seen or len(seen) >= MAX_FRAGMENTS:
                     raise Damaged("file node list fragments form a loop")
                 seen.add(stp)
@@ -316,8 +315,8 @@ class NativeStore(Store):
                 pos = stp + 16
                 end = stp + cb - 20
                 while pos + 4 <= end:
-                    if limit is not None and len(nodes) >= limit:
-                        return nodes
+                    if limit is not None and count >= limit:
+                        return
                     header = int.from_bytes(data[pos:pos + 4], "little")
                     fid = header & 0x3FF
                     size = (header >> 10) & 0x1FFF
@@ -327,21 +326,18 @@ class NativeStore(Store):
                         if header == 0:
                             break  # zero padding before the next-fragment reference
                         raise Damaged(f"FileNode at byte {pos} overruns its fragment")
-                    self._nodes_read += 1
-                    if self._nodes_read > MAX_NODES:
-                        raise Damaged("too many file nodes")
-                    nodes.append(_Node(fid, (header >> 27) & 0xF, (header >> 23) & 3, (header >> 25) & 3, pos + 4,
-                                       pos + size))
+                    work.spend(1)
+                    count += 1
+                    yield _Node(fid, (header >> 27) & 0xF, (header >> 23) & 3, (header >> 25) & 3, pos + 4, pos + size)
                     pos += size
-                if limit is not None and len(nodes) >= limit:
-                    break
+                if limit is not None and count >= limit:
+                    return
                 tail = Buf(data, stp + cb - 20, stp + cb)
                 stp, cb = tail.u64(), tail.u32()
         except Damaged:
-            if not nodes or self._nodes_read > MAX_NODES:
+            if not count:
                 raise
             self.warn_once("Part of the OneNote file is damaged; the content stored there is lost")
-        return nodes
 
     # ------------------------------------------------------------------ root list, object spaces
 
@@ -350,22 +346,21 @@ class NativeStore(Store):
         if self._chunk(stp, cb) is None:
             raise OneNoteError("damaged OneNote file: no root file node list")
         try:
-            nodes = self._list_nodes(stp, cb)
+            for node in self._nodes(stp, cb):
+                try:
+                    buf = Buf(self.data, node.start, node.end)
+                    if node.fid == OBJECT_SPACE_MANIFEST_ROOT:
+                        self.root_gosid = buf.ext_guid20()
+                    elif node.fid == OBJECT_SPACE_MANIFEST_LIST_REF:
+                        ref = self._ref(buf, node.stp_fmt, node.cb_fmt)
+                        gosid = buf.ext_guid20()
+                        self._spaces[gosid] = self._chunk(*ref)
+                    elif node.fid == FILE_DATA_STORE_LIST_REF:
+                        self._file_store_ref = self._chunk(*self._ref(buf, node.stp_fmt, node.cb_fmt))
+                except Damaged:
+                    self.warn_once("Part of the OneNote root file node list is damaged and was skipped")
         except Damaged as exc:
             raise OneNoteError(f"damaged OneNote file: the root file node list is unreadable ({exc})") from exc
-        for node in nodes:
-            try:
-                buf = Buf(self.data, node.start, node.end)
-                if node.fid == OBJECT_SPACE_MANIFEST_ROOT:
-                    self.root_gosid = buf.ext_guid20()
-                elif node.fid == OBJECT_SPACE_MANIFEST_LIST_REF:
-                    ref = self._ref(buf, node.stp_fmt, node.cb_fmt)
-                    gosid = buf.ext_guid20()
-                    self._spaces[gosid] = self._chunk(*ref)
-                elif node.fid == FILE_DATA_STORE_LIST_REF:
-                    self._file_store_ref = self._chunk(*self._ref(buf, node.stp_fmt, node.cb_fmt))
-            except Damaged:
-                self.warn_once("Part of the OneNote root file node list is damaged and was skipped")
         if self.root_gosid is None and len(self._spaces) == 1:
             self.root_gosid = next(iter(self._spaces))
         if self.root_gosid is None:
@@ -389,17 +384,22 @@ class NativeStore(Store):
                 raise
             except Damaged:
                 self.warn_once("A damaged part of the OneNote file was skipped")
+            except TooLarge:
+                if self.work.exhausted:
+                    raise
+                self.space_too_large()
         self._space_cache[ref] = space
         return space
 
     def _open_space(self, gosid: ExtGuid, manifest: Tuple[int, int]) -> Optional[NativeSpace]:
+        budget = Budget(MAX_SPACE_ITEMS)
         revision_list = None
-        for node in self._list_nodes(*manifest):
+        for node in self._nodes(*manifest):
             if node.fid == REVISION_MANIFEST_LIST_REF:  # all but the last MUST be ignored
                 revision_list = self._chunk(*self._ref(Buf(self.data, node.start, node.end), node.stp_fmt, node.cb_fmt))
         if revision_list is None:
             return None
-        revisions, labels, order = self._revision_list(*revision_list)
+        revisions, labels, order = self._revision_list(*revision_list, budget)
         current = labels.get((NIL, 1))
         if current is None or current not in revisions:
             if not order:
@@ -420,14 +420,19 @@ class NativeStore(Store):
             raise Encrypted("the section is password protected")
         objects: Dict[ExtGuid, _Decl] = {}
         roots: Dict[int, ExtGuid] = {}
-        for rev in reversed(chain):  # the oldest dependency first; later revisions override
-            for group in rev.groups:
-                for oid, decl in self._object_group(*group).items():
-                    self._merge(objects, oid, decl)
+        revs = chain[::-1]  # the oldest dependency first; later revisions override
+        # a group listed more than once is read once, at its last place (which gives the same
+        # objects as reading it each time)
+        last = {group: (ri, gi) for ri, rev in enumerate(revs) for gi, group in enumerate(rev.groups)}
+        for ri, rev in enumerate(revs):
+            for gi, group in enumerate(rev.groups):
+                if last[group] == (ri, gi):
+                    for oid, decl in self._object_group(*group, budget).items():
+                        self._merge(objects, oid, decl)
             for oid, decl in rev.objects.items():
                 self._merge(objects, oid, decl)
             roots.update(rev.roots)
-        return NativeSpace(self, gosid, objects, roots)
+        return NativeSpace(self, gosid, objects, roots, budget)
 
     @staticmethod
     def _merge(objects: Dict[ExtGuid, _Decl], oid: ExtGuid, decl: _Decl) -> None:
@@ -440,7 +445,7 @@ class NativeStore(Store):
 
     # ------------------------------------------------------------------ revisions (2.1.9 - 2.1.12)
 
-    def _revision_list(self, stp: int, cb: int):
+    def _revision_list(self, stp: int, cb: int, budget: Budget):
         revisions: Dict[ExtGuid, _Revision] = {}
         labels: Dict[Tuple[ExtGuid, int], ExtGuid] = {}
         order: List[ExtGuid] = []
@@ -448,10 +453,12 @@ class NativeStore(Store):
         table: Dict[int, bytes] = {}
         pending_roots: List[Tuple[int, int]] = []  # (role, CompactID) of .onetoc2 root references
         data = self.data
-        for node in self._list_nodes(stp, cb):
+        for node in self._nodes(stp, cb):
+            budget.spend(1)  # what a node may leave behind: a label, a table entry, a root
             fid = node.fid
             buf = Buf(data, node.start, node.end)
             if fid in (REVISION_MANIFEST_START4, REVISION_MANIFEST_START6, REVISION_MANIFEST_START7):
+                budget.spend(REVISION_COST)
                 rid = buf.ext_guid20()
                 dependent = buf.ext_guid20()
                 if fid == REVISION_MANIFEST_START4:
@@ -520,34 +527,37 @@ class NativeStore(Store):
                 cid = buf.u32()
                 pending_roots.append((buf.u32(), cid))
             elif fid in _DECLARATIONS:
+                budget.spend(DECLARATION_COST)
+                self.work.spend(DECLARATION_COST)
                 self._declare(node, table, current.objects)
         return revisions, labels, order
 
     # ------------------------------------------------------------------ object groups (2.1.13)
 
-    def _object_group(self, stp: int, cb: int) -> Dict[ExtGuid, _Decl]:
+    def _object_group(self, stp: int, cb: int, budget: Budget) -> Dict[ExtGuid, _Decl]:
         objects: Dict[ExtGuid, _Decl] = {}
         table: Dict[int, bytes] = {}
         try:
-            nodes = self._list_nodes(stp, cb)
+            for node in self._nodes(stp, cb):
+                budget.spend(1)
+                fid = node.fid
+                try:
+                    if fid in (GLOBAL_ID_TABLE_START, GLOBAL_ID_TABLE_START2):
+                        table = {}
+                    elif fid == GLOBAL_ID_TABLE_ENTRY:
+                        buf = Buf(self.data, node.start, node.end)
+                        index = buf.u32()
+                        table[index] = buf.guid()
+                    elif fid in _DECLARATIONS:
+                        budget.spend(DECLARATION_COST)
+                        self.work.spend(DECLARATION_COST)
+                        self._declare(node, table, objects)
+                    elif fid == OBJECT_GROUP_END:
+                        break
+                except Damaged:
+                    self.warn_once("Some OneNote object declarations are damaged and were skipped")
         except Damaged:
             self.warn_once("A damaged part of the OneNote file was skipped")
-            return objects
-        for node in nodes:
-            fid = node.fid
-            try:
-                if fid in (GLOBAL_ID_TABLE_START, GLOBAL_ID_TABLE_START2):
-                    table = {}
-                elif fid == GLOBAL_ID_TABLE_ENTRY:
-                    buf = Buf(self.data, node.start, node.end)
-                    index = buf.u32()
-                    table[index] = buf.guid()
-                elif fid in _DECLARATIONS:
-                    self._declare(node, table, objects)
-                elif fid == OBJECT_GROUP_END:
-                    break
-            except Damaged:
-                self.warn_once("Some OneNote object declarations are damaged and were skipped")
         return objects
 
     def _declare(self, node: _Node, table: Dict[int, bytes], objects: Dict[ExtGuid, _Decl]) -> None:
@@ -602,7 +612,7 @@ class NativeStore(Store):
             self._file_store = {}
             if self._file_store_ref is not None:
                 try:
-                    for node in self._list_nodes(*self._file_store_ref):
+                    for node in self._nodes(*self._file_store_ref):
                         if node.fid == FILE_DATA_STORE_OBJECT_REF:
                             buf = Buf(self.data, node.start, node.end)
                             ref = self._chunk(*self._ref(buf, node.stp_fmt, node.cb_fmt))
@@ -611,17 +621,20 @@ class NativeStore(Store):
                                 self._file_store[guid] = ref
                 except Damaged:
                     self.warn_once("The OneNote file data store is damaged; some pictures are missing")
+        if key in self._file_data:  # one copy, however often the file is used
+            return self._file_data[key]
         ref = self._file_store.get(key)
-        if ref is None:
-            return None
-        stp, cb = ref
-        try:
-            buf = Buf(self.data, stp, stp + cb)
-            if buf.guid() != FILE_DATA_HEADER:
-                raise Damaged("bad file data header")
-            length = buf.u64()
-            buf.skip(12)  # unused, reserved
-            return buf.take(length)
-        except Damaged:
-            self.warn_once("Some OneNote file data objects are damaged and were skipped")
-            return None
+        data: Optional[bytes] = None
+        if ref is not None:
+            stp, cb = ref
+            try:
+                buf = Buf(self.data, stp, stp + cb)
+                if buf.guid() != FILE_DATA_HEADER:
+                    raise Damaged("bad file data header")
+                length = buf.u64()
+                buf.skip(12)  # unused, reserved
+                data = buf.take(length)
+            except Damaged:
+                self.warn_once("Some OneNote file data objects are damaged and were skipped")
+        self._file_data[key] = data
+        return data

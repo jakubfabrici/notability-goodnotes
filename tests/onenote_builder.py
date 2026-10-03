@@ -2,7 +2,8 @@
 ([MS-ONESTORE] 2.7 - 2.8, [MS-FSSHTTPB] 2.2.1) from an object description, so the reader can
 be tested on exact, synthetic inputs without the sample repositories.
 
-A section is a dict of object spaces; every space lists named objects and its root objects::
+A section is a dict of object spaces; every space lists named objects and its root objects
+(or, with ``share``, reuses another space's object group, as a crafted file can)::
 
     build_section({
         "section": Space(roots={1: "sec"}, objects={
@@ -55,6 +56,7 @@ class Blob:
 class Space:
     roots: Dict[int, str]
     objects: Dict[str, Any] = field(default_factory=dict)  # name -> (jcid, props) | Blob
+    share: Optional[str] = None  # use the object group of that (earlier) space instead of its own
 
 
 # ----------------------------------------------------------------------------------- primitives
@@ -189,12 +191,16 @@ def build_section(spaces: Dict[str, Space], root: str, *, extra_root_roles: Opti
     index_children: List[bytes] = []
     storage_children = [stream_object(0x0C, SCHEMA_ONE),
                         stream_object(0x07, ext_guid(CONTEXT_GUID, 2) + cell(root))]
+    group_of: Dict[str, int] = {}
     for space_name, space in spaces.items():
         manifest_n, revision_n, mapping_n, group_n = (next(serial) for _ in range(4))
         rid = ext_guid(ELEMENTS_GUID, 5000 + revision_n)
         declarations: List[bytes] = []
         datas: List[bytes] = []
-        for name, spec in space.objects.items():
+        if space.share is not None:
+            group_n = group_of[space.share]
+        group_of[space_name] = group_n
+        for name, spec in space.objects.items() if space.share is None else ():
             if isinstance(spec, Blob):
                 blob_n = next(serial)
                 payload = (cu64(len(spec.data)) if spec.length_prefix else b"") + spec.data
@@ -215,13 +221,15 @@ def build_section(spaces: Dict[str, Space], root: str, *, extra_root_roles: Opti
                                                   + cu64(len(refs) if partition == 1 else 0)
                                                   + cu64(len(spaces_used) if partition == 1 else 0)))
                 datas.append(stream_object(0x16, arrays + cu64(len(data)) + data))
-        group = data_element(group_n, 0x05, [stream_object(0x1D, b"", declarations), stream_object(0x1E, b"", datas)])
+        if space.share is None:
+            elements.append(data_element(group_n, 0x05, [stream_object(0x1D, b"", declarations),
+                                                         stream_object(0x1E, b"", datas)]))
         roots = dict(space.roots)
         roots.update((extra_root_roles or {}).get(space_name, {}))
         revision_children = [stream_object(0x1A, rid + b"\x00")]
         revision_children += [stream_object(0x0A, ext_guid(ROOT_ROLES, role) + oid(obj)) for role, obj in roots.items()]
         revision_children.append(stream_object(0x19, ext_guid(ELEMENTS_GUID, group_n)))
-        elements += [group, data_element(revision_n, 0x04, revision_children),
+        elements += [data_element(revision_n, 0x04, revision_children),
                      data_element(manifest_n, 0x03, [stream_object(0x0B, rid)])]
         index_children.append(stream_object(0x0E, cell(space_name) + ext_guid(ELEMENTS_GUID, manifest_n) + b"\x00"))
         index_children.append(stream_object(0x0D, rid + ext_guid(ELEMENTS_GUID, revision_n) + b"\x00"))

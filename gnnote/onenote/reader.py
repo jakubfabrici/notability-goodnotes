@@ -39,9 +39,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from ..model import Document, Image, Page, Stroke, TextBox, TextRun
 from . import schema as S
 from .common import (
-    FILE_TYPE_ONE, FILE_TYPE_ONETOC2, FORMAT_NATIVE, FORMAT_PACKAGE, Encrypted, Obj, ObjectSpace,
-    OneNoteError, Store, p_bool, p_bytes, p_f32, p_ref, p_refs, p_sets, p_text, p_u8, p_u16, p_u32,
-    p_u32_array,
+    FILE_TYPE_ONE, FILE_TYPE_ONETOC2, FORMAT_NATIVE, FORMAT_PACKAGE, MAX_WORK, MIN_WORK, WORK_PER_BYTE, Budget,
+    Encrypted, Obj, ObjectSpace, OneNoteError, Store, TooLarge, p_bool, p_bytes, p_f32, p_ref, p_refs, p_sets,
+    p_text, p_u8, p_u16, p_u32, p_u32_array,
 )
 from .ink import InkBudget, InkTransform, ink_bounds, ink_data_strokes
 from .native import NativeStore
@@ -67,6 +67,8 @@ MAX_DEPTH = 32  # nesting of outlines, outline elements and ink containers
 MAX_PAGES = 10_000
 MAX_SECTIONS = 1_000
 MAX_IMAGE_BYTES = 512 * 1024 * 1024  # picture bytes one document may hold
+MAX_ITEMS = 200_000  # pictures, text boxes and text runs one document may hold
+MAX_TEXT_BYTES = 64 * 1024 * 1024  # bytes of typed text one document may hold
 MAX_MEMBER_BYTES = 256 * 1024 * 1024  # declared size above which a ZIP member is skipped
 MAX_TOTAL_BYTES = 1024 * 1024 * 1024  # bytes one notebook ZIP may inflate to in total
 RECYCLE_BIN = "onenote_recyclebin"
@@ -111,15 +113,19 @@ def is_onepkg(data: bytes) -> bool:
     return b".one\x00" in head or b".onetoc2\x00" in head
 
 
-def open_store(data: bytes) -> Store:
-    """The revision store of a ``.one`` / ``.onetoc2`` file, whatever its packaging."""
+def open_store(data: bytes, work: Optional[Budget] = None) -> Store:
+    """The revision store of a ``.one`` / ``.onetoc2`` file, whatever its packaging.
+
+    ``work`` is the document's budget (a new one when ``None``); :class:`TooLarge` when it
+    runs out before the file's structure is read.
+    """
     if len(data) < 64 or bytes(data[0:16]) not in (FILE_TYPE_ONE, FILE_TYPE_ONETOC2):
         raise OneNoteError(NOT_ONENOTE_MESSAGE)
     fmt = bytes(data[48:64])
     if fmt == FORMAT_NATIVE:
-        return NativeStore(data)
+        return NativeStore(data, work)
     if fmt == FORMAT_PACKAGE:
-        return PackageStore(data)
+        return PackageStore(data, work)
     raise OneNoteError(NOT_ONENOTE_MESSAGE)
 
 
@@ -128,15 +134,73 @@ def open_store(data: bytes) -> Store:
 # ----------------------------------------------------------------------------------
 
 
+class _Allowance:
+    """An amount one document may use, granted section by section up to ``cap``."""
+
+    __slots__ = ("cap", "granted", "left")
+
+    def __init__(self, cap: int):
+        self.cap = cap
+        self.granted = 0
+        self.left = 0
+
+    def grant(self, n: int) -> None:
+        n = max(0, min(n, self.cap - self.granted))
+        self.granted += n
+        self.left += n
+
+    def take(self, n: int) -> bool:
+        if n > self.left:
+            return False
+        self.left -= n
+        return True
+
+
 class _Context:
-    """Budgets and counters shared by every section of one document."""
+    """Budgets and counters shared by every section of one document.
+
+    Work, ink points and picture bytes are granted section by section, as much as the
+    section's own size calls for (see :meth:`grant`): a crafted file that makes one stroke,
+    picture or structure count many times can neither fill memory with copies nor keep the
+    reader busy for long.
+    """
 
     def __init__(self, doc: Document):
         self.doc = doc
         self.ink = InkBudget()
-        self.image_bytes = MAX_IMAGE_BYTES
+        self.work = Budget(MIN_WORK)
+        self.work_granted = MIN_WORK
+        self.images = _Allowance(MAX_IMAGE_BYTES)  # picture bytes
+        self.text = _Allowance(MAX_TEXT_BYTES)  # bytes of typed text
+        self.items = MAX_ITEMS
         self.counts: Counter = Counter()
         self.pages = 0
+
+    def grant(self, section_size: int) -> None:
+        """Room for what a section of ``section_size`` bytes can hold: its ink points, its
+        picture and text bytes (both are stored in the section, once) and the work of
+        reading it."""
+        self.ink.grant(section_size)
+        self.images.grant(section_size)
+        self.text.grant(section_size)
+        n = max(0, min(section_size * WORK_PER_BYTE, MAX_WORK - self.work_granted))
+        self.work_granted += n
+        self.work.left += n
+
+    def take_text(self, n: int) -> bool:
+        """Room for ``n`` more bytes of typed text (else the paragraph is dropped and counted)."""
+        if self.text.take(n):
+            return True
+        self.counts["text_budget"] += 1
+        return False
+
+    def take_items(self, n: int) -> bool:
+        """Room for ``n`` more pictures, text boxes or runs (else counted as dropped)."""
+        if n > self.items:
+            self.counts["over_items"] += 1
+            return False
+        self.items -= n
+        return True
 
     def warn(self, message: str) -> None:
         self.doc.warn(message)
@@ -175,9 +239,17 @@ class _Context:
                       "down" + huge)
         if self.ink.exhausted:
             self.warn("The notes hold more ink than gnnote reads in one go; the rest was dropped")
+        if c["over_items"]:
+            self.warn(f"The notes hold more pictures and text than gnnote reads in one go; {c['over_items']} "
+                      "picture(s) or text box(es) were dropped")
+        if self.work.exhausted:
+            self.warn("The OneNote file is too large or complex to read completely; the rest was skipped")
         if c["image_budget"]:
-            self.warn(f"{c['image_budget']} picture(s) were dropped because the pictures exceed "
-                      f"{MAX_IMAGE_BYTES // (1024 * 1024)} MB in total")
+            self.warn(f"{c['image_budget']} picture(s) were dropped because the pictures exceed what gnnote reads "
+                      f"in one go ({MAX_IMAGE_BYTES // (1024 * 1024)} MB, and no more than the file itself holds)")
+        if c["text_budget"]:
+            self.warn(f"{c['text_budget']} paragraph(s) of text were dropped because the notes hold more text than "
+                      "gnnote reads in one go")
 
 
 # ----------------------------------------------------------------------------------
@@ -440,10 +512,12 @@ class _PageReader:
         if fmt is None or data is None:
             self.ctx.counts["bad_images" if data and len(data) > 16 else "missing_images"] += 1
             return None
-        if len(data) > self.ctx.image_bytes:
+        if len(data) > self.ctx.images.left:
             self.ctx.counts["image_budget"] += 1
             return None
-        self.ctx.image_bytes -= len(data)
+        if not self.ctx.take_items(1):
+            return None
+        self.ctx.images.take(len(data))
         return data, fmt
 
     def image_size(self, obj: Obj, data: bytes, fmt: str) -> Tuple[float, float]:
@@ -605,6 +679,8 @@ class _PageReader:
         else:
             raw = p_bytes(props, S.TEXT_EXTENDED_ASCII) or b""
             unit, codec = 1, "cp1252"
+        if not self.ctx.take_text(len(raw)):
+            raw = b""
         while len(raw) >= unit and raw[-unit:] == b"\x00" * unit:  # WzInAtom: null-terminated
             raw = raw[:-unit]
         n_units = len(raw) // unit
@@ -694,6 +770,8 @@ class _PageReader:
         align = {0: "left", 1: "center", 2: "right"}.get(aligns.pop() if len(aligns) == 1 else 0, "left")
         if not _finite(x, y, width, height):
             self.ctx.counts["far_content"] += 1
+            return
+        if not self.ctx.take_items(1 + len(runs)):
             return
         self.page.texts.append(TextBox(x=x, y=y, w=width, h=max(height, size * LINE_SPACING), text=text,
                                        runs=runs, size=size, align=align))
@@ -865,8 +943,12 @@ def _section_title(space: ObjectSpace, section: Obj) -> Optional[str]:
 
 
 def _read_section(ctx: _Context, data: bytes) -> Tuple[Optional[str], List[Page]]:
-    """Pages of one section file (raises :class:`OneNoteError` / :class:`Encrypted`)."""
-    store = open_store(data)
+    """Pages of one section file (raises :class:`OneNoteError` / :class:`Encrypted`).
+
+    When the document's budget runs out, the pages read so far are returned.
+    """
+    ctx.grant(len(data))
+    store = open_store(data, ctx.work)
     if store.is_toc:
         raise OneNoteError(TOC_MESSAGE)
     root = store.root_space()
@@ -879,32 +961,46 @@ def _read_section(ctx: _Context, data: bytes) -> Tuple[Optional[str], List[Page]
         raise OneNoteError("damaged OneNote section: its section object is missing")
     title = _section_title(root, section)
     pages: List[Page] = []
+    try:
+        _read_pages(ctx, store, root, section, pages)
+    except TooLarge:
+        pass  # ctx.report() says so; the pages read so far stay
+    for message in store.warnings:
+        ctx.warn(message)
+    return title, pages
+
+
+def _read_pages(ctx: _Context, store: Store, root: ObjectSpace, section: Obj, pages: List[Page]) -> None:
+    """Every page of a section into ``pages``, one object space at a time."""
+    seen = set()
     for series_ref in p_refs(section.props, S.ELEMENT_CHILD_NODES):
         series = root.get(series_ref)
         if series is None or series.jcid != S.PAGE_SERIES_NODE:
             ctx.counts["unknown"] += 1
             continue
         for space_ref in p_refs(series.props, S.CHILD_GRAPH_SPACE_ELEMENT_NODES):
+            if space_ref in seen:
+                continue  # a page listed twice is read once
+            seen.add(space_ref)
             if ctx.pages >= MAX_PAGES:
                 ctx.warn(f"Only the first {MAX_PAGES} pages were read")
-                return title, pages
-            space = store.space(space_ref)  # Encrypted propagates
+                return
+            space = store.space(space_ref)  # Encrypted and an exhausted document budget propagate
             if space is None:
                 ctx.counts["unreadable_pages"] += 1
                 continue
             try:
                 page = _PageReader(ctx, space).read()
-            except Encrypted:
+            except (Encrypted, TooLarge):
                 raise
             except Exception:  # noqa: BLE001 - tolerant reader: one bad page never loses the others
                 ctx.counts["unreadable_pages"] += 1
                 continue
+            finally:
+                store.release(space)  # a section holds one page in memory at a time
             if page is not None:
                 pages.append(page)
                 ctx.pages += 1
-    for message in store.warnings:
-        ctx.warn(message)
-    return title, pages
 
 
 # ----------------------------------------------------------------------------------
@@ -959,6 +1055,11 @@ def _listing(names: Sequence[str], limit: int = 10) -> str:
     return shown if len(names) <= limit else f"{shown}, ... ({len(names)} in all)"
 
 
+def _not_read(ctx: _Context, names: Sequence[str]) -> None:
+    labels = [posixpath.basename(n)[:-4] for n in names]
+    ctx.warn(f"{len(labels)} section(s) were not read (the notebook is too large or complex): " + _listing(labels))
+
+
 def _in_recycle_bin(name: str) -> bool:
     parts = [p.lower() for p in name.split("/")]
     return RECYCLE_BIN in parts[:-1] or parts[-1] == DELETED_PAGES
@@ -966,7 +1067,7 @@ def _in_recycle_bin(name: str) -> bool:
 
 def _toc_entries(ctx: _Context, data: bytes) -> List[Tuple[int, int, str, Optional[bytes]]]:
     """(ordering ID, position, file name, file identity) of every entry of a ``.onetoc2``."""
-    store = open_store(data)
+    store = open_store(data, ctx.work)
     root = store.root_space()
     toc = root.root(S.ROLE_CONTENT) if root is not None else None
     if toc is None:
@@ -1062,7 +1163,10 @@ def _read_zip(ctx: _Context, data: bytes) -> Tuple[str, List[Page]]:
     failed: List[str] = []  # damaged sections
     unpacked = 0  # sections the ZIP itself could not give (reported by archive.report)
     first_error = ""
-    for name in ordered:
+    for i, name in enumerate(ordered):
+        if ctx.work.exhausted:  # the budget ran out in an earlier section
+            _not_read(ctx, ordered[i:])
+            break
         raw = archive.read(name)
         label = posixpath.basename(name)[:-4]
         if raw is None:
@@ -1073,6 +1177,9 @@ def _read_zip(ctx: _Context, data: bytes) -> Tuple[str, List[Page]]:
         except Encrypted:
             encrypted.append(label)
             continue
+        except TooLarge:  # the budget ran out before the section's structure was read
+            _not_read(ctx, ordered[i:])
+            break
         except Exception as exc:  # noqa: BLE001 - one damaged section never loses the others
             failed.append(label)
             first_error = first_error or (str(exc) if isinstance(exc, OneNoteError) else exc.__class__.__name__)
@@ -1089,6 +1196,8 @@ def _read_zip(ctx: _Context, data: bytes) -> Tuple[str, List[Page]]:
     if not read_names:
         if encrypted and not failed and not unpacked:
             raise OneNoteError(ENCRYPTED_MESSAGE)
+        if ctx.work.exhausted:
+            raise OneNoteError("the notebook is too large or complex to read")
         reason = f" ({first_error})" if len(failed) == 1 and not encrypted and not unpacked else ""
         raise OneNoteError("none of the notebook's sections could be read" + reason)
     if len(read_names) > 1:

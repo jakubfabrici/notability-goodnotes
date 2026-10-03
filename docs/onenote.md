@@ -187,10 +187,33 @@ stays the nominal width.
 Every offset, length and count is checked against the bytes that are present before
 anything is allocated; reference loops (file node lists, revision chains, object graphs) are
 cut; nesting is bounded (stream objects 24, property sets 16, outlines and ink containers
-32); fragments may not reassemble to more than the file holds; a document holds at most 4
-million ink points and 512 MB of pictures; ZIP members above 256 MB (declared) or beyond
-1 GB in total are skipped. An encrypted section is detected from its revision structure and
-refused before any property set is decoded. Nothing but `ValueError` leaves `read_onenote`.
+32); fragments may not reassemble to more than the file holds; ZIP members above 256 MB
+(declared) or beyond 1 GB in total are skipped. An encrypted section is detected from its
+revision structure and refused before any property set is decoded. Nothing but `ValueError`
+leaves `read_onenote`.
+
+Bounds checks alone do not bound the cost of a crafted file: a few megabytes can hold
+millions of two-byte structures, or make one object group, stroke, picture or paragraph count
+on thousands of pages. So:
+
+* nothing is built per structure: file node lists and stream objects are walked where they
+  lie, and a section holds one page's objects at a time;
+* a **work budget** bounds time: about one unit per microsecond (a file node or stream object
+  costs 1, applying or decoding an object 10). A document starts with 2 million units and
+  every section adds one unit per byte, up to 30 million (real files use under 0.2 units per
+  byte). When it runs out, the pages read so far are kept and a warning says so;
+* a **memory budget** per page: about one unit per 100 bytes kept (objects, references,
+  properties, revisions), 1 million units per page. Real pages use 30 - 50 units per stroke;
+  a page beyond the budget is read as far as it fits or skipped, with a warning;
+* what a document can hold grows with its sections' size: one ink point per 2 bytes (a point
+  takes at least a byte per coordinate; real files use 11 bytes or more), one byte of
+  pictures and of typed text per byte, at most 4 million points, 512 MB of pictures, 64 MB of
+  text and 200 000 pictures, text boxes and runs. A picture used many times is one copy.
+
+Measured on crafted files of up to 63 MB, a read then takes at most about 30 seconds and a
+page's structures at most about 150 MB; ink costs what the same number of points costs from a
+real notebook (about 160 bytes per point in the model). `tests/test_onenote_budgets.py`
+checks each mechanism on small crafted files.
 
 ## 5. Why `.onepkg` is refused
 
@@ -216,6 +239,10 @@ OneDrive notebook folder and checking whether OneNote for iPad lists it.
 
 ## 7. Tests
 
+`tests/test_onenote_synthetic.py` and `tests/test_onenote_budgets.py` build sections from
+scratch (`tests/onenote_builder.py`) and need no samples: exact unit mapping, layout rules,
+error paths, and crafted files that are small but expensive (dense structures, shared object
+groups, a stroke, picture or paragraph used many times).
 `tests/test_onenote.py` and `tests/test_onenote_hardening.py` use the sample sections of
 onenote.rs, Joplin's onenote-converter, Microsoft's Interop-TestSuites, libmson, the Obsidian
 Importer and py-onenote-parser, fetched at pinned commits as sparse checkouts (`REPOS`,
