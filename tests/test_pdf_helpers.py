@@ -13,13 +13,33 @@
 """
 from __future__ import annotations
 
+import os
 import random
 import struct
 import zlib
-from typing import Dict, List, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
 from gnnote.model import Document, Image, Page, PdfBackground, Point, Stroke, TextBox, TextRun
 from gnnote.pdfutil import make_paper_pdf
+
+# --------------------------------------------------------------------------- sample corpus
+
+
+def corpus_files(root: Path) -> Iterator[Path]:
+    """Every file under the samples root, sorted, following symlinked repositories (a local
+    samples directory often links the clones in; ``Path.rglob`` does not descend into those)."""
+    seen = set()
+    for top, dirs, files in os.walk(root, followlinks=True):
+        real = os.path.realpath(top)
+        if real in seen:  # a link cycle, or the same clone linked twice
+            dirs[:] = []
+            continue
+        seen.add(real)
+        dirs[:] = sorted(d for d in dirs if d != ".git")
+        for name in sorted(files):
+            yield Path(top) / name
+
 
 # --------------------------------------------------------------------------- PDF building
 

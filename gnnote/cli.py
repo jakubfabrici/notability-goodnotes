@@ -235,7 +235,7 @@ def _cmd_batch(args: argparse.Namespace, out: Any, err: Any) -> int:
               for ext in f.input_extensions}
     files = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in wanted)
     if not files:
-        print(f"no {' or '.join(sorted(wanted))} files in {directory}", file=out)
+        print(f"no note files to convert in {directory} (looked for {', '.join(sorted(wanted))})", file=out)
         return 0
     options = _options_from_args(args)
     failed = 0

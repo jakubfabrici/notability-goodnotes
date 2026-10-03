@@ -20,7 +20,7 @@ from gnnote.pdf.reader import read_pdf
 from gnnote.pdf.writer import write_pdf
 from gnnote.pdfutil import make_paper_pdf, pdf_info
 
-from tests.test_pdf_helpers import (annot_types, build_pdf, ink_bbox, mupdf_warnings, one_page_pdf, render,
+from tests.test_pdf_helpers import (annot_types, build_pdf, corpus_files, ink_bbox, mupdf_warnings, one_page_pdf, render,
                                     require_mupdf, stream)
 
 _annot_types = annot_types
@@ -359,7 +359,8 @@ def test_goodnotes_export_widths_match_the_notebook(samples) -> None:
 def test_loose_sample_pdfs_with_ink(samples) -> None:
     """Other Ink-annotated PDFs in the reference corpus (when present) convert and strip."""
     root = Path(samples.root)
-    files = [p for p in sorted(root.rglob("*.pdf")) if p.is_file() and p.stat().st_size < 20_000_000]
+    files = [p for p in corpus_files(root)
+             if p.suffix.lower() == ".pdf" and p.is_file() and p.stat().st_size < 20_000_000]
     checked = 0
     for path in files:
         data = path.read_bytes()

@@ -14,7 +14,7 @@ from gnnote.pdf.text import HELVETICA_WIDTHS, EmbeddedFont, Helvetica, choose_fo
 from gnnote.pdf.ttf import DEFAULT_FONT_PATH, TrueTypeFont, default_font
 from gnnote.pdfutil import pdf_info
 
-from tests.test_pdf_helpers import build_pdf, one_page_pdf
+from tests.test_pdf_helpers import build_pdf, corpus_files, one_page_pdf
 
 
 # --------------------------------------------------------------------------- serialisation
@@ -58,7 +58,7 @@ def test_page_matrix_maps_the_mediabox_onto_the_displayed_page() -> None:
 def _sample_pdfs(samples) -> List[Tuple[str, bytes]]:
     items: List[Tuple[str, bytes]] = []
     root = Path(samples.root)
-    for path in sorted(root.rglob("*")):
+    for path in corpus_files(root):
         if not path.is_file() or path.stat().st_size > 30_000_000:
             continue
         if path.suffix.lower() == ".pdf":

@@ -24,6 +24,17 @@ export const FORMATS = [
     "defaultTarget": "goodnotes"
   },
   {
+    "id": "noteful",
+    "name": "Noteful",
+    "extension": ".noteful",
+    "inputExtensions": [
+      ".noteful"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
+  },
+  {
     "id": "pdf",
     "name": "PDF",
     "extension": ".pdf",

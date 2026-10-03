@@ -58,6 +58,11 @@ gnnote/
   notability/archivebuilder.py NSKeyedArchiver object-graph builder (write)
   notability/reader.py   read_note(data: bytes) -> Document
   notability/writer.py   write_note(doc: Document, options: Options | None = None) -> bytes
+  noteful/__init__.py    constants of the .noteful container (docs/noteful.md)
+  noteful/ttv.py         tag-type-value records: bounded tolerant decoder, strict encoder
+  noteful/reader.py      read_noteful(data: bytes) -> Document
+  noteful/writer.py      write_noteful(doc: Document, options: Options | None = None) -> bytes
+  formats.py             the format registry: one NoteFormat entry per app (sniffer, reader, writer)
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
   server.py              stdlib HTTP server: static web UI + POST /api/convert
@@ -104,6 +109,8 @@ gnnote.goodnotes.reader.read_goodnotes(data: bytes) -> Document
 gnnote.goodnotes.writer.write_goodnotes(doc: Document, options: Options) -> bytes
 gnnote.notability.reader.read_note(data: bytes) -> Document
 gnnote.notability.writer.write_note(doc: Document, options: Options) -> bytes
+gnnote.noteful.reader.read_noteful(data: bytes) -> Document
+gnnote.noteful.writer.write_noteful(doc: Document, options: Options) -> bytes   # Noteful: docs/noteful.md
 ```
 
 Primitives:

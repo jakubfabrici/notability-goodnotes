@@ -191,7 +191,8 @@ def test_cli_pdf_options(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     folder.mkdir()
     (folder / "Doc.pdf").write_bytes(_annotated_pdf())
     assert main(["batch", str(folder)]) == 0
-    assert "no .goodnotes or .note files" in capsys.readouterr().out
+    listed = capsys.readouterr().out
+    assert "no note files to convert" in listed and ".pdf" not in listed
     assert main(["batch", str(folder), "--include-pdf", "-o", str(tmp_path / "out")]) == 0
     assert (tmp_path / "out" / "Doc.note").is_file()
     assert main(["batch", str(tmp_path / "out"), "--to", "pdf", "--pdf-ink", "annotations"]) == 0
