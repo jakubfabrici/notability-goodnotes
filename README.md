@@ -1,12 +1,18 @@
 # gnnote
 
-Converts notes between **GoodNotes** (`.goodnotes`) and **Notability** (`.note`) in both
-directions while keeping the handwriting **editable** in the target app: strokes are written
-as native ink, not as a flattened PDF or image.
+Converts notes between **GoodNotes** (`.goodnotes`), **Notability** (`.note`) and **Noteful**
+(`.noteful`) in every direction while keeping the handwriting **editable** in the target app:
+strokes are written as native ink, not as a flattened PDF or image.
 
-Neither app imports the other's format, and both export only PDF or images for exchange.
+None of these apps imports another's format, and they export only PDF or images for exchange.
 gnnote reads the real container formats (documented in `docs/`) and writes files the other
-app opens as its own.
+apps open as their own.
+
+| App | File | Read | Write |
+|---|---|---|---|
+| GoodNotes 5 / 6 | `.goodnotes` | yes | yes |
+| Notability 4 to 16 | `.note` | yes | yes |
+| Noteful (files of 1.4.25 to 1.4.33) | `.noteful` | yes | yes (not yet opened in Noteful, see below) |
 
 * Pure Python 3.11+, standard library only, MIT licence, clean-room implementation.
 * Runs as a web page in the browser (Pyodide, nothing is uploaded anywhere), as a command-line
@@ -29,6 +35,17 @@ app opens as its own.
 GoodNotes notebooks written by GoodNotes 5 and 6 up to the 2026 builds (container schema 24,
 25 and 35) and Notability notes from version 4 to 16 are read.
 
+| Content | Noteful to GoodNotes / Notability | GoodNotes / Notability to Noteful |
+|---|---|---|
+| Handwriting | Editable ink with per-point width (Noteful stores polylines; widths as in the other columns above) | Editable ink; Bezier strokes flattened to 1 pt, per-point width kept |
+| Highlighter | Kept (Noteful draws highlighters at 50 % opacity) | Kept as Noteful highlighter |
+| Shapes (lines, Beziers, arrows, rectangles, ellipses, polygons) | Ordinary strokes along the exact outline; fills become shape fills (kept by GoodNotes, dropped by Notability); dashes drawn solid | Arrive as ink |
+| Shape fills | see Shapes | Filled polygons (unverified in Noteful) |
+| Text boxes | Kept with runs (font, size, bold, italic, underline, colour), alignment and rotation; box background colour dropped | Kept as Noteful rich text |
+| Images | PNG/JPEG kept; a crop is undone (the whole picture at the scale shown), a flip is dropped | PNG/JPEG kept with rotation; PDF stickers dropped |
+| PDF pages and paper | PDF pages carried; Noteful templates carried as the PDF the app rendered | PDF pages carried; plain pages get generated paper PDFs |
+| Layers, bookmarks, audio, tags | Layers merged; the rest dropped | Not written |
+
 Dropped, with a warning in the output: audio recordings, stickers / sticky notes, stroke
 dash patterns (drawn solid), Notability vector shapes, math objects, image crops and flips.
 GoodNotes auto-shapes are converted silently: they become ordinary strokes drawn along the
@@ -38,6 +55,10 @@ the web page, printed by the CLI and returned in the `X-GnNote-Warnings` header 
 
 ## Verification status
 
+Noteful files are read and written per the files of Noteful 1.4.25 and 1.4.33 and checked
+against notesconverter's strict parser and Noteful's own PDF exports; no gnnote-written
+`.noteful` file has been opened in Noteful yet (`docs/noteful.md` section 9 lists what to
+check on a device).
 GoodNotes -> Notability ink import confirmed on the author's iPad with a one-page test;
 everything else is validated against third-party parsers and sample files only, not on
 devices.
@@ -51,7 +72,7 @@ devices.
 settings are needed first: Settings -> Pages -> Source "GitHub Actions", and either a public
 repository or a paid GitHub plan (GitHub Free has no Pages for private repositories). Until
 then the workflow ends with a notice and deploys nothing. Open the page on the iPad (or any
-browser), choose or drop a `.goodnotes` or `.note` file, pick the options, press Convert and
+browser), choose or drop a `.goodnotes`, `.note` or `.noteful` file, pick the options, press Convert and
 download or share the result into the other app. The conversion runs in the browser with
 Pyodide (about 13.5 MB downloaded on first use); files never leave the device.
 
@@ -72,6 +93,7 @@ python3 -m gnnote convert Notebook.goodnotes                  # writes Notebook.
 python3 -m gnnote convert Note.note -o out/ --title "Maths"   # writes out/Note.goodnotes
 python3 -m gnnote convert Notebook.goodnotes --paper pdf --no-pressure --simplify 0.3
 python3 -m gnnote info Note.note [--json]                     # format, title, pages, counts, warnings
+python3 -m gnnote convert Notebook.noteful --to goodnotes      # writes Notebook.goodnotes
 python3 -m gnnote batch ~/Notes -o ~/Converted --to notability
 ```
 
@@ -111,6 +133,7 @@ docker compose up -d        # builds the image (vendored Pyodide) and serves por
 
 | CLI | Web / API | Meaning |
 |---|---|---|
+| `--to FORMAT` | `to=FORMAT` (the page: "Convert to") | Output format: `goodnotes`, `notability` or `noteful` (default: GoodNotes and Notability swap, other apps' files become Notability notes). |
 | `--paper plain` (default) | `paper=plain` | GoodNotes stock paper becomes Notability plain paper; pages are scaled to Notability's page. User PDFs are always kept. |
 | `--paper pdf` | `paper=pdf` | Every page becomes a PDF-backed Notability page using the GoodNotes paper PDF (keeps ruled paper and page size; untested on devices). |
 | `--no-pressure` | `pressure=false` | Constant-width Notability strokes instead of per-point widths. |
@@ -155,6 +178,7 @@ test with Chromium, once per pull-request change and on pushes to `main`; `pages
 * `docs/goodnotes-v35-binding.md`, `docs/goodnotes-v35-strokes.md`, `docs/goodnotes-v35-elements.md`:
   what the 2026 GoodNotes builds (container schema 25/35) changed in page binding, strokes and elements.
 * `docs/notability-format.md`: the `.note` package and its `Session.plist` object graph.
+* `docs/noteful.md`: the `.noteful` container, its records, ink and objects, and gnnote's mapping.
 * `docs/ecosystem.md`: import/export capabilities of both apps, existing tools, licensing.
 * `tests/e2e/README.md`: the browser end-to-end test.
 
@@ -172,7 +196,7 @@ separate-process test oracles (see `NOTICE.md`):
 [Notability-notes-converter](https://github.com/nokcha0/Notability-notes-converter),
 [svg2notability](https://github.com/jvns/svg2notability) and
 [denotability](https://github.com/miroreo/denotability).
-GoodNotes and Notability are trademarks of their respective owners; this project is not
+GoodNotes, Notability and Noteful are trademarks of their respective owners; this project is not
 affiliated with either.
 
 ## Licence

@@ -23,5 +23,34 @@ implementation written from the byte-level research notes in `docs/`.
   **only as test oracles**: the test suite runs them in a separate process, in their own
   checkout, to compare results. No code from them is included in, imported by or linked
   into the `gnnote` package.
+* The Noteful codec (`gnnote/noteful/`) was written from the format facts in `docs/noteful.md`,
+  which were derived from **notesconverter** (https://github.com/samuelsadok/notesconverter),
+  MIT License, Copyright (c) 2026 Samuel Sadok: its sample files and its reading of the format.
+  The writer follows the record shapes notesconverter writes and its author verified on
+  devices, and two of its schemes are adapted: the delta encoding of rich-text attributes
+  (each chunk lists the attributes that changed, the font size always) and the generation of
+  page ordering tags (a 7-character base-64 counter starting at "+E+++++"). notesconverter's
+  parser is also run by the test suite as a separate-process oracle; it is never imported
+  into the package. Its licence, which applies to the adapted parts:
+
+  > MIT License
+  >
+  > Copyright (c) 2026 Samuel Sadok
+  >
+  > Permission is hereby granted, free of charge, to any person obtaining a copy of this
+  > software and associated documentation files (the "Software"), to deal in the Software
+  > without restriction, including without limitation the rights to use, copy, modify, merge,
+  > publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+  > to whom the Software is furnished to do so, subject to the following conditions:
+  >
+  > The above copyright notice and this permission notice shall be included in all copies or
+  > substantial portions of the Software.
+  >
+  > THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+  > INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+  > PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+  > FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+  > OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+  > DEALINGS IN THE SOFTWARE.
 * Other reference material (notability-to-svg, GPL-3.0; inkref and jojo-notes, no licence)
   informed the documented file-format facts only; no code was copied.
