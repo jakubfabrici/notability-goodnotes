@@ -141,13 +141,20 @@ function formatById(id) {
   return FORMATS.find((f) => f.id === id) || null;
 }
 
+// A .zip is accepted as well: OneDrive downloads a OneNote notebook folder as one, and a
+// renamed note file may end in .zip too. The converter recognises the format by content.
+const CONTAINER_EXTENSIONS = [".zip"];
+// Not advertised, but passed on: the converter cannot read a OneNote .onepkg package and
+// answers with how to download the notebook as a .zip instead.
+const EXPLAINED_EXTENSIONS = [".onepkg"];
+
 function readableExtensions() {
   return FORMATS.filter((f) => f.readable).flatMap((f) => f.inputExtensions);
 }
 
-// Zipped notes are accepted too: iOS shares a CollaNote package (a folder) as "Name.cnote.zip",
-// and the converter recognises the app from the content whatever the file is called.
-const ZIP_EXTENSION = ".zip";
+// iOS shares a CollaNote package (a folder) as "Name.cnote.zip": the name before ".zip" still
+// tells the app.
+const ZIP_EXTENSION = CONTAINER_EXTENSIONS[0];
 
 function isZipName(name) {
   return String(name || "").toLowerCase().endsWith(ZIP_EXTENSION);
@@ -156,6 +163,11 @@ function isZipName(name) {
 function withoutZip(name) {
   const text = String(name || "");
   return isZipName(text) ? text.slice(0, -ZIP_EXTENSION.length) : text;
+}
+
+function containerExtensionOf(name) {
+  const lower = String(name || "").toLowerCase();
+  return CONTAINER_EXTENSIONS.concat(EXPLAINED_EXTENSIONS).find((ext) => lower.endsWith(ext)) || null;
 }
 
 /** The format a file name announces ("Name.cnote.zip" counts as .cnote); null when unknown. */
@@ -259,10 +271,10 @@ function acceptFile(file) {
   show(el.result, false);
   state.last = null;
   if (!file) return;
-  if (!sourceFormatOf(file.name) && !isZipName(file.name)) {
+  if (!sourceFormatOf(file.name) && !containerExtensionOf(file.name)) {
     state.file = null;
     show(el.fileInfo, false);
-    el.fileError.textContent = t("file.badext", { list: readableExtensions().concat(ZIP_EXTENSION).join(", ") });
+    el.fileError.textContent = t("file.badext", { list: readableExtensions().concat(CONTAINER_EXTENSIONS).join(", ") });
     show(el.fileError, true);
     updateConvertButton();
     return;
@@ -533,11 +545,12 @@ async function convertViaServer(file, options) {
 function swapExtension(name, target) {
   const dst = formatById(target);
   const src = formatById(sourceFormatOf(name));
+  // "Name.cnote.zip" -> "Name", "Notebook.zip" (a OneNote download) -> "Notebook"
   let stem = withoutZip(name);
-  if (src) {
-    const ext = src.inputExtensions.find((e) => stem.toLowerCase().endsWith(e));
-    if (ext) stem = stem.slice(0, stem.length - ext.length);
-  }
+  const ext = src
+    ? src.inputExtensions.find((e) => stem.toLowerCase().endsWith(e))
+    : containerExtensionOf(stem);
+  if (ext) stem = stem.slice(0, stem.length - ext.length);
   return stem + (dst ? dst.extension : "");
 }
 

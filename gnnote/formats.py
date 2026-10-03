@@ -13,6 +13,7 @@ import importlib
 import io
 import os
 import re
+import uuid
 import zipfile
 import zlib
 from dataclasses import dataclass
@@ -180,6 +181,28 @@ def _sniff_excalidraw(data: bytes, names: Optional[List[str]]) -> bool:
     return head[:1] == b"{" and bool(_EXCALIDRAW_TYPE_RE.search(head))
 
 
+# OneNote header GUIDs as stored ([MS-ONESTORE] 2.3.1, 2.8.1): file type at offset 0 (.one /
+# .onetoc2), packaging at offset 48 (desktop revision store / OneDrive alternative packaging).
+_ONENOTE_FILE_TYPES = (uuid.UUID("7B5C52E4-D88C-4DA7-AEB1-5378D02996D3").bytes_le,
+                       uuid.UUID("43FF2FA1-EFD9-4C76-9EE2-10EA5722765F").bytes_le)
+_ONENOTE_PACKAGINGS = (uuid.UUID("109ADD3F-911B-49F5-A5D0-1791EDC8AED8").bytes_le,
+                       uuid.UUID("638DE92F-A6D4-4BC1-9A36-B3FC2511A5B7").bytes_le)
+
+
+def _sniff_onenote(data: bytes, names: Optional[List[str]]) -> bool:
+    """A section / table of contents by its header GUIDs, a notebook ZIP by its member
+    names, or a ``.onepkg`` (claimed so that the reader can explain how to get a ZIP)."""
+    if names is not None:
+        return any(n.lower().endswith((".one", ".onetoc2")) for n in names if not n.endswith("/"))
+    head = bytes(data[:64])
+    if len(head) == 64 and head[:16] in _ONENOTE_FILE_TYPES and head[48:64] in _ONENOTE_PACKAGINGS:
+        return True
+    if head.startswith(b"MSCF"):
+        cab = bytes(data[:65536]).lower()
+        return b".one\x00" in cab or b".onetoc2\x00" in cab
+    return False
+
+
 def _sniff_pdf(data: bytes, names: Optional[List[str]]) -> bool:
     # ``%PDF`` within the first 1024 bytes (readers tolerate junk before the header).  A ZIP
     # archive -- readable or damaged (``PK`` signature) -- is never a PDF, even when its
@@ -246,6 +269,13 @@ FORMATS: Dict[str, NoteFormat] = {
             id="remarkable", name="reMarkable", extension=".rmdoc",
             input_extensions=(".rmdoc", ".rm"), sniff=_sniff_remarkable,
             reader="gnnote.remarkable.reader:read_remarkable",
+        ),
+        # Read only: a section (.one, desktop or OneDrive packaging) or a notebook folder
+        # downloaded from OneDrive as a .zip; see docs/onenote.md.
+        NoteFormat(
+            id="onenote", name="OneNote", extension=".one",
+            input_extensions=(".one",), sniff=_sniff_onenote,
+            reader="gnnote.onenote.reader:read_onenote",
         ),
         NoteFormat(
             id="pdf", name="PDF", extension=".pdf",

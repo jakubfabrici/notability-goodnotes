@@ -88,6 +88,20 @@ REPOS: Dict[str, Tuple[str, str]] = {
               "f143d84b46cb6faf795b13c00aee6d31f69e5da9"),
     "xournalpp": ("https://github.com/xournalpp/xournalpp",
                   "9882ffaaf2c012a1de4c33161eb4284468d84b9d"),
+    # OneNote sample sections (docs/onenote.md): MPL-2.0 / AGPL / LGPL / MIT / Apache-2.0
+    # files used only as external test data, never copied into this repository.
+    "onenote.rs": ("https://github.com/msiemens/onenote.rs",
+                   "fa4d7a044324af3bfe68727704a9789a08b36a3c"),
+    "joplin": ("https://github.com/laurent22/joplin",
+               "b04a5f04890a71c8929db4b0ccd45369ea983ae4"),
+    "Interop-TestSuites": ("https://github.com/OfficeDev/Interop-TestSuites",
+                           "fe87ed3253de01804a2ae6e1d0015943da6023f8"),
+    "libmson": ("https://github.com/blu-base/libmson",
+                "37bc22d6c98f17eac451c4330aac494e60990a6c"),
+    "obsidian-importer": ("https://github.com/obsidianmd/obsidian-importer",
+                          "d2cb052c365999118c75c998254fcbb1c15a13fe"),
+    "py-onenote-parser": ("https://github.com/Kev744/py-onenote-parser",
+                          "04c935cd79c5290e758418817d792f18c33c4fbe"),
 }
 
 # Repositories too large to check out whole: only these directories are checked out (a
@@ -103,6 +117,18 @@ SPARSE: Dict[str, Tuple[str, ...]] = {
     "YTU-Archive": ("1-2/Semiconductor/slide",),  # 63 MB of a much larger repository
     "saber": ("test/sbn_examples", "test/demo_notes"),
     "xournalpp": ("test/files/load", "test/files/packaged_xopp"),
+    "onenote.rs": ("crates/parser/tests/samples",),
+    "joplin": ("packages/onenote-converter/test-data",),
+    "Interop-TestSuites": ("FileSyncandWOPI/Source/MS-ONESTORE/TestSuite/Resources",),
+    "libmson": ("resources",),
+    "obsidian-importer": ("tests/onenote-file/fixtures",),
+}
+
+# Repositories whose download is large (their sample sits at the top level, so a sparse
+# checkout cannot leave it out): used when present under $GNNOTE_SAMPLES, cloned only with
+# GNNOTE_LARGE_SAMPLES=1 (CI skips them), so the tests that need them usually skip.
+LARGE: Dict[str, str] = {
+    "py-onenote-parser": "a 46 MB OneNote section (performance test)",
 }
 
 # name -> (URL at a pinned commit, SHA-256, size in bytes); see the module docstring.
@@ -162,6 +188,8 @@ def clone_pinned(target: Path, url: str, sha: str, sparse: Optional[Sequence[str
 
 def _clone(root: Path, name: str) -> Optional[Path]:
     if os.environ.get("GNNOTE_OFFLINE"):
+        return None
+    if name in LARGE and not os.environ.get("GNNOTE_LARGE_SAMPLES"):
         return None
     target = root / name
     url, sha = REPOS[name]
@@ -354,6 +382,26 @@ class SampleSet:
         if not path.is_file():
             pytest.skip(f"inkterop fixture {'/'.join(parts)} not available")
         return path
+
+    # (repository, sample directory) of the OneNote sections, both packagings
+    ONENOTE_DIRS = (("onenote.rs", "crates/parser/tests/samples"), ("joplin", "packages/onenote-converter/test-data"),
+                    ("Interop-TestSuites", "FileSyncandWOPI/Source/MS-ONESTORE/TestSuite/Resources"),
+                    ("libmson", "resources"), ("obsidian-importer", "tests/onenote-file/fixtures"),
+                    ("py-onenote-parser", "."))
+
+    def onenote_files(self, pattern: str = "*.one") -> List[Path]:
+        """Every OneNote sample file of the available repositories (``LARGE`` ones only when
+        present).  Includes the encrypted section and two Git LFS pointer files (not OneNote)."""
+        files: List[Path] = []
+        for name, sub in self.ONENOTE_DIRS:
+            try:
+                base = self.repo(name) / sub
+            except pytest.skip.Exception:
+                continue
+            files += sorted(p for p in base.rglob(pattern) if p.is_file() and ".git" not in p.parts)
+        if not files:
+            pytest.skip("no OneNote sample files available")
+        return files
 
     def notability_template(self) -> Path:
         path = self.repo("notability-to-svg") / "example.note"

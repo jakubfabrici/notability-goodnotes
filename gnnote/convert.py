@@ -127,10 +127,18 @@ def detect_format(filename: str, data: bytes) -> str:
                      f"(expected {_supported_extensions()})")
 
 
+def _name_after_file(doc: Document, filename: str) -> None:
+    """Give an untitled document the file's name (a OneNote section is named by its file)."""
+    if not (doc.title or "").strip():
+        doc.title = os.path.splitext(os.path.basename(filename or ""))[0] or "Untitled"
+
+
 def to_document(data: bytes, filename: str) -> Document:
     """Read any supported format into the shared :class:`~gnnote.model.Document` model."""
     fmt = _formats.get(detect_format(filename, data))
-    return fmt.read(bytes(data))
+    doc = fmt.read(bytes(data))
+    _name_after_file(doc, filename)
+    return doc
 
 
 def document_stats(doc: Document) -> Dict[str, int]:
@@ -191,6 +199,7 @@ def convert(data: bytes, filename: str, options: Optional[Options] = None) -> Co
     if target == source:
         raise ValueError(f"the file already is a {_formats.get(source).name} file; choose another target")
     doc = _formats.get(source).read(bytes(data))
+    _name_after_file(doc, filename)
     if options.title:
         doc.title = str(options.title)
     out = _formats.get(target).write(doc, options)

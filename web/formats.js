@@ -117,6 +117,17 @@ export const FORMATS = [
     "defaultTarget": "notability"
   },
   {
+    "id": "onenote",
+    "name": "OneNote",
+    "extension": ".one",
+    "inputExtensions": [
+      ".one"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
+  },
+  {
     "id": "pdf",
     "name": "PDF",
     "extension": ".pdf",

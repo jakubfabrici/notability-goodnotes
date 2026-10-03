@@ -145,6 +145,24 @@ Notability files. Nothing here has been checked on a device of the source app.
 | Flexcil (`.flx`; `.flex` backups: the first document of the library, the others are named in a warning) | Editable ink with per-point widths, colours and highlighters; shapes (lines, rectangles, ellipses, polygons, arcs, arrows) become ink strokes; text boxes and images are kept | Every page keeps its PDF page as a PDF background (Flexcil templates included) | Masking objects, links, audio; lasso transforms and dashes are drawn untransformed and solid; image placement is unverified |
 | reMarkable (`.rmdoc` from the desktop app; single v6 `.rm` pages) | Editable ink with the device's rendered widths, colours (palette or RGBA), highlighters and shaders; text highlights become highlighter strokes | Notebook pages at 226 dpi (reMarkable 2 or Paper Pro canvas, grown to fit ink), template style as paper; PDF pages keep their PDF background | Erasers, hidden layers, inserted images; typed text and strokes anchored to it are placed approximately; EPUBs without a PDF rendition become plain pages |
 
+### OneNote (read only)
+
+| OneNote content | In GoodNotes / Notability |
+|---|---|
+| Handwriting | Editable ink: position, colour, transparency, pen width; pressure as per-point widths (approximate curve) |
+| Highlighter | Kept as highlighter |
+| Handwriting written inline in typed text | Ink, placed approximately along its lines |
+| Pictures (PNG/JPEG), PDF printouts | Images (a printout as one picture per page; the PDF itself is not carried over) |
+| Typed text and page titles | Text boxes with formatting; positions and line breaks approximate (OneNote reflows text itself) |
+| Pages | One page each; OneNote's unbounded page grows to hold its content |
+| Notebook `.zip` | All sections merged into one document, in the notebook's section order |
+
+Dropped with a warning: tables, math, note tags, attached files, recordings, other picture
+formats. Refused with an explanation: password-protected sections, `.onepkg` packages, a
+`.onetoc2` on its own. Writing OneNote is not supported. On an iPad, download the notebook
+folder from onedrive.live.com in Safari (select the folder, *Download*) and convert the
+`.zip`; see `docs/onenote.md` for the steps and the details.
+
 ## Verification status
 
 Noteful files are read and written per the files of Noteful 1.4.25 and 1.4.33 and checked
@@ -155,6 +173,9 @@ GoodNotes -> Notability ink import confirmed on the author's iPad with a one-pag
 everything else is validated against third-party parsers and sample files only, not on
 devices. PDF output and input are checked with MuPDF (PyMuPDF, as a test oracle: renders,
 text extraction, no warnings) and against GoodNotes' own PDF exports of the sample notebooks.
+devices. OneNote input is validated against 56 sample sections of both packagings and the
+one2html renderer; no notebook made on an iPad has been tested yet (`docs/onenote.md` lists
+the files that would close that gap).
 
 ## Quick start
 
@@ -165,8 +186,9 @@ text extraction, no warnings) and against GoodNotes' own PDF exports of the samp
 settings are needed first: Settings -> Pages -> Source "GitHub Actions", and either a public
 repository or a paid GitHub plan (GitHub Free has no Pages for private repositories). Until
 then the workflow ends with a notice and deploys nothing. Open the page on the iPad (or any
-browser), choose or drop a `.goodnotes`, `.note` or `.noteful` file, pick the options, press Convert and
-download or share the result into the other app. The conversion runs in the browser with
+browser), choose or drop a note file of any app in the table above (a OneNote notebook as the
+`.zip` OneDrive downloads), pick the target app and options, press Convert and download or share
+the result into the other app. The conversion runs in the browser with
 Pyodide (about 13.5 MB downloaded on first use); files never leave the device.
 
 To serve the page yourself:
@@ -195,6 +217,8 @@ python3 -m gnnote convert Notebook.goodnotes --to pdf --pdf-ink annotations   # 
 python3 -m gnnote convert Annotated.pdf                       # Annotated.note with the PDF's ink editable
 python3 -m gnnote batch ~/PDFs --include-pdf --to goodnotes   # batch skips .pdf files unless asked
 python3 -m gnnote convert Lecture.xopp --to goodnotes             # any supported app to any other
+python3 -m gnnote convert "Biology.zip" --to goodnotes          # a OneNote notebook from OneDrive
+python3 -m gnnote formats                                     # the apps and what is read / written
 ```
 
 Exit codes: 0 success, 1 a file could not be read or converted, 2 usage error. Warnings go
@@ -262,7 +286,10 @@ unavailable are skipped; `GNNOTE_OFFLINE=1` disables cloning. Large repositories
 out sparsely (`SPARSE`), and single large files (`LARGE_FILES`, a 100 MB CollaNote notebook)
 are only downloaded with `GNNOTE_LARGE_SAMPLES=1`, so CI skips them. Oracle parsers (goodparse,
 parser-for-goodnotes) run in a subprocess with their own `PYTHONPATH` and are never
-imported into the package; parser-for-goodnotes needs `numpy`.
+imported into the package; parser-for-goodnotes needs `numpy`. The OneNote samples are
+sparse checkouts (`SPARSE`); repositories listed in `LARGE` (a 46 MB OneNote section) are
+only cloned with `GNNOTE_LARGE_SAMPLES=1`. The one2html renderer serves as a OneNote oracle
+when its binary is found (`GNNOTE_ONE2HTML`, `PATH` or `$GNNOTE_SAMPLES/one2html/target/release/`).
 
 Browser end-to-end test (Playwright, see `tests/e2e/README.md`):
 
@@ -288,6 +315,8 @@ test with Chromium, once per pull-request change and on pushes to `main`; `pages
 * `docs/collanote.md`: CollaNote's `.cnote` containers, stroke protobuf and geometry, Apple
   PencilKit drawings (`gnnote/pencilkit.py`), what the reader verifies and what it infers.
 * `docs/pdf.md`: what the PDF writer produces and what the PDF reader converts, byte by byte.
+* `docs/onenote.md`: OneNote input: getting the files from an iPad, what converts, the
+  container and ink facts the reader relies on, why writing OneNote is not supported.
 * `docs/ecosystem.md`: import/export capabilities of both apps, existing tools, licensing.
 * `docs/nebo.md`: MyScript Notes / Nebo packages and BINK ink, and how gnnote maps them.
 * `docs/flexcil.md`: Flexcil documents and backups, and how gnnote maps them.
@@ -312,6 +341,15 @@ separate-process test oracles (see `NOTICE.md`):
 [svg2notability](https://github.com/jvns/svg2notability),
 [denotability](https://github.com/miroreo/denotability) and
 [collanote_cnote_to_pdf_converter](https://github.com/alarsama/collanote_cnote_to_pdf_converter).
+The OneNote reader follows Microsoft's published [MS-ONESTORE], [MS-FSSHTTPB] and [MS-ONE]
+specifications; its ink facts were checked against the
+[onenote.rs](https://github.com/msiemens/onenote.rs) wiki and its tests use
+[one2html](https://github.com/msiemens/one2html) as an oracle and sample files from onenote.rs,
+[Joplin](https://github.com/laurent22/joplin),
+[Interop-TestSuites](https://github.com/OfficeDev/Interop-TestSuites),
+[libmson](https://github.com/blu-base/libmson),
+[Obsidian Importer](https://github.com/obsidianmd/obsidian-importer) and
+[py-onenote-parser](https://github.com/Kev744/py-onenote-parser).
 GoodNotes, Notability, Noteful, CollaNote and the other apps named here are trademarks of their
 respective owners; this project is not affiliated with any of them.
 

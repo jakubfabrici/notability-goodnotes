@@ -75,6 +75,9 @@ gnnote/
   xournalpp/             Xournal++ .xopp / .xoj: reader.read_xopp, writer.write_xopp (docs/xournalpp.md)
   saber/                 Saber .sba / .sbn2 / .sbn: bson, reader.read_saber, writer.write_saber (docs/saber.md)
   excalidraw/            Excalidraw .excalidraw: reader.read_excalidraw, writer.write_excalidraw (docs/excalidraw.md)
+  onenote/               read only: common.py (bounded bytes, property sets), native.py (desktop
+                         revision store), package.py (OneDrive packaging), schema.py, ink.py,
+                         reader.py read_onenote(data: bytes) -> Document  (docs/onenote.md)
   formats.py             the format registry: id, name, extensions, content sniffer, reader / writer paths
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
@@ -132,6 +135,7 @@ gnnote.nebo.reader.read_nebo(data: bytes) -> Document                 # read onl
 gnnote.flexcil.reader.read_flexcil(data: bytes, document=None) -> Document   # read only
 gnnote.flexcil.reader.list_flexcil_documents(data: bytes) -> List[FlexcilEntry]
 gnnote.remarkable.reader.read_remarkable(data: bytes) -> Document     # read only
+gnnote.onenote.reader.read_onenote(data: bytes) -> Document   # .one (both packagings) or a notebook .zip
 ```
 
 Every format is one entry of `gnnote/formats.py` (`FORMATS`): id, name, extensions, a content
