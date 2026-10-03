@@ -62,7 +62,10 @@ gnnote/
   noteful/ttv.py         tag-type-value records: bounded tolerant decoder, strict encoder
   noteful/reader.py      read_noteful(data: bytes) -> Document
   noteful/writer.py      write_noteful(doc: Document, options: Options | None = None) -> bytes
-  formats.py             the format registry: one NoteFormat entry per app (sniffer, reader, writer)
+  pencilkit.py           Apple PencilKit PKDrawing -> neutral PKStroke list -> model strokes (app-neutral)
+  collanote/__init__.py
+  collanote/reader.py    read_cnote(data: bytes) -> Document   (CollaNote .cnote; read only, docs/collanote.md)
+  formats.py             the format registry: id, name, extensions, content sniffer, reader / writer paths
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
   server.py              stdlib HTTP server: static web UI + POST /api/convert
@@ -111,6 +114,10 @@ gnnote.notability.reader.read_note(data: bytes) -> Document
 gnnote.notability.writer.write_note(doc: Document, options: Options) -> bytes
 gnnote.noteful.reader.read_noteful(data: bytes) -> Document
 gnnote.noteful.writer.write_noteful(doc: Document, options: Options) -> bytes   # Noteful: docs/noteful.md
+gnnote.collanote.reader.read_cnote(data: bytes) -> Document          # no CollaNote writer
+gnnote.pencilkit.parse_pkdrawing(data: bytes) -> PKDrawing            # version, inks, strokes, skipped counts
+gnnote.pencilkit.decode_pkdrawing(data: bytes) -> List[PKStroke]
+gnnote.pencilkit.to_model_stroke(stroke, scale=1.0, dx=0.0, dy=0.0) -> Optional[Stroke]
 ```
 
 Primitives:
@@ -118,7 +125,7 @@ Primitives:
 ```python
 # protobuf.py
 class Field(NamedTuple): number: int; wire_type: int; value: Union[int, bytes]
-def decode_message(data: bytes) -> List[Field]
+def decode_message(data: bytes, max_fields: Optional[int] = None) -> List[Field]   # ValueError beyond max_fields
 def decode_records(data: bytes) -> List[bytes]           # varint-length-prefixed record stream
 def encode_records(records: Iterable[bytes]) -> bytes
 def varint(n: int) -> bytes
@@ -355,13 +362,36 @@ event synthesis, inkref's confirmed stroke encoding):
   for the hand-decoded sample stroke match GoodNotes' own bytes (test), otherwise the option
   falls back to flat with a warning.
 
+### 4.5 CollaNote → model (`collanote/reader.py`; byte facts in `collanote.md`)
+
+* Containers: format-1 ZIP (`note without pdf.cnote`, `N.cpage`, `N.pdf`), format-2 package
+  (`manifest.cnm`, `basenote.cdat`, …) zipped with or without its `X.cnote/` folder, a ZIP
+  holding one `.cnote`, and (best effort) the bare-JSON note. The registry sniffs member names at
+  depth ≤ 1, so `X.cnote.zip` or any other name converts; `output_filename` drops both extensions.
+* Pages in file-number order. `pdfPointer` → `PdfBackground(str(pdfIndex), pageIndex)`, page =
+  the PDF page's size, `s = pdf_w / W` (`W, H` = note `size`); blank page = `W × H` scaled like
+  the nearest PDF page, else 0.2 mm per unit (A4 notebooks). Ink, images and text use `s`.
+* `_dkDrawing` strokes → polylines with per-point widths (`#3`, fallback style width); inkType 27
+  → highlighter, 1 / 5 / unknown → pen (unknown codes warned once, listed); colour RGBA as stored.
+  Legacy `drawing` PencilKit ink via `gnnote.pencilkit`, moved up by `i·H` when it lies in page
+  `i`'s band of one continuous canvas (unverified, warned).
+* Attachments: `image` → `Image` (centre/size normalised by `W`/`H`; rotation clockwise about the
+  centre, unverified when non-zero), `text` → `TextBox` from the NSAttributedString (font size in
+  canvas units × `s`; warned as inferred). Audio, bookmarks, unknown attachments → warnings.
+* Limits: members 256 MB / 1 GB total, base64 payloads 64 MB, 200 000 strokes and 2 000 000
+  points per page, 10 000 pages; a damaged page becomes a blank page with a warning; only
+  non-CollaNote data raises `ValueError`. No writer (unverified import route and `Codable`
+  strictness, see `collanote.md` §9).
+
 ## 5. Web UI (`web/`)
 
 * Static, no build step for development: `index.html` + `app.js` (main thread) + `worker.js`
   (**module** worker) + `styles.css` + `i18n.js` (Slovak default, English toggle, strings in
   one table). Works from `file://`? No — served over HTTP (`python -m gnnote.server` or any
   static host). Phone-width layout, dark mode via `prefers-color-scheme`.
-* Flow: choose/drop a `.goodnotes` or `.note` → options (paper: plain/pdf; pressure; simplify)
+* Flow: choose/drop a file with a readable format's extension (`web/formats.js`), or any `.zip`
+  (a zipped note, e.g. a CollaNote package `X.cnote.zip`; the converter decides from the content)
+  → options (paper: plain/pdf; pressure; simplify)
   → "Convert" → progress (loading Python ~13.5 MB on first use, converting) → download card with
   the output name, stats, warnings → buttons: **Download** (`a[download]`) and, when
   `navigator.canShare({files})`, **Share / Save to Files** (`navigator.share`). Errors show the
@@ -412,8 +442,12 @@ event synthesis, inkref's confirmed stroke encoding):
 * `tests/conftest.py`: fixture `samples` → directory with the reference repositories
   (`franzthiemann/goodparse`, `Kaih1825/parser-for-goodnotes`, `HuyNguyenAu/notability-to-svg`,
   `xrayshan/notability-reader`, `jvns/svg2notability`, `samuelsadok/notesconverter`,
-  `nokcha0/Notability-notes-converter`, `cable729/inkterop`, `miroreo/denotability`), taken from `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
-  `tests/.samples/` (skipped when offline). Oracle parsers run **in a subprocess** with their
+  `nokcha0/Notability-notes-converter`, `cable729/inkterop`, `miroreo/denotability`, and the
+  CollaNote / PencilKit samples `enisogdum/YTU-Archive` (sparse checkout) and `r987r/Flashcard`),
+  taken from `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
+  `tests/.samples/` (skipped when offline). Large single files (`LARGE_FILES`: a 100 MB CollaNote
+  notebook) are used when present and downloaded only with `GNNOTE_LARGE_SAMPLES=1` (SHA-256
+  pinned; CI skips them). Oracle parsers run **in a subprocess** with their
   own `PYTHONPATH` (never imported into our package).
 * Unit tests per primitive (hand-built vectors + round trips). Reader tests over every sample
   file of both formats: no exception, stroke counts match the oracle parser where one exists,

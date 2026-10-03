@@ -35,6 +35,17 @@ export const FORMATS = [
     "defaultTarget": "notability"
   },
   {
+    "id": "collanote",
+    "name": "CollaNote",
+    "extension": ".cnote",
+    "inputExtensions": [
+      ".cnote"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
+  },
+  {
     "id": "pdf",
     "name": "PDF",
     "extension": ".pdf",

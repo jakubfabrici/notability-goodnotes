@@ -180,6 +180,8 @@ def test_other_format_and_output_filename() -> None:
     assert output_filename("archive.zip", NOTABILITY) == "archive.note"
     assert output_filename(".note", GOODNOTES) == ".note.goodnotes"
     assert output_filename("", NOTABILITY) == "converted.note"
+    assert output_filename("Lecture.cnote.zip", NOTABILITY) == "Lecture.note"  # a zipped package
+    assert output_filename("a.b.zip", NOTABILITY) == "a.b.note"
     assert EXTENSIONS[GOODNOTES] == ".goodnotes" and EXTENSIONS[NOTABILITY] == ".note"
     assert EXTENSIONS == {f.id: f.extension for f in FORMATS.values()}  # one entry per format
 

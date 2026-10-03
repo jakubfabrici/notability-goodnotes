@@ -9,20 +9,23 @@ Sub-commands::
                  [--simplify PT] [--pdf-ink flatten|annotations] [--include-pdf]
     gnnote formats
 
-FORMAT is a format id from ``gnnote formats`` (``goodnotes``, ``notability``, ``pdf``).
+FORMAT is a format id from ``gnnote formats`` (``goodnotes``, ``notability``, ``pdf``, ...).
 Without ``--to`` GoodNotes and Notability files swap and other apps' files (and PDFs) become
 Notability notes.  ``batch`` converts PDF files only with ``--include-pdf``: a notes folder
 usually holds the PDF exports of its notebooks too, and both would be written to the same
-output name.
+output name.  IN / FILE (and the entries of DIR) may also be a package directory, such as a
+CollaNote ``X.cnote`` folder: it is zipped in memory first.
 
 Exit codes: 0 success, 1 a conversion failed (or a file could not be read), 2 usage error.
 """
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -30,7 +33,7 @@ from . import __version__
 from . import formats as _formats
 from .convert import Options, convert, detect_format, document_stats, to_document
 
-__all__ = ["main", "build_parser", "describe"]
+__all__ = ["main", "build_parser", "describe", "read_input"]
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -42,6 +45,27 @@ class _ArgumentParser(argparse.ArgumentParser):
 
 class _UsageError(Exception):
     pass
+
+
+MAX_PACKAGE_BYTES = 1024 * 1024 * 1024  # a package directory zipped in memory may hold this much
+
+
+def read_input(source: Path) -> bytes:
+    """The bytes of a note file; a package directory (a CollaNote ``X.cnote`` folder as it lies
+    on disk) is zipped in memory with its folder name in front, the way it is shared."""
+    if not source.is_dir():
+        return source.read_bytes()
+    buf = io.BytesIO()
+    total = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        for path in sorted(source.rglob("*")):
+            if not path.is_file():
+                continue
+            total += path.stat().st_size
+            if total > MAX_PACKAGE_BYTES:
+                raise OSError(f"the package is larger than {MAX_PACKAGE_BYTES // (1024 * 1024)} MB")
+            zf.write(path, source.name + "/" + path.relative_to(source).as_posix())
+    return buf.getvalue()
 
 
 def _add_write_options(parser: argparse.ArgumentParser, ribbon: bool = True, title: bool = True) -> None:
@@ -120,7 +144,7 @@ def _print_warnings(warnings: Sequence[str], stream: Any) -> None:
 def _cmd_convert(args: argparse.Namespace, out: Any, err: Any) -> int:
     source = Path(args.input)
     try:
-        data = source.read_bytes()
+        data = read_input(source)
     except OSError as exc:
         print(f"error: cannot read {source}: {exc}", file=err)
         return 1
@@ -203,7 +227,7 @@ def _format_info(info: Dict[str, Any]) -> str:
 def _cmd_info(args: argparse.Namespace, out: Any, err: Any) -> int:
     source = Path(args.file)
     try:
-        data = source.read_bytes()
+        data = read_input(source)
     except OSError as exc:
         print(f"error: cannot read {source}: {exc}", file=err)
         return 1
@@ -228,12 +252,12 @@ def _cmd_batch(args: argparse.Namespace, out: Any, err: Any) -> int:
         print(f"error: {directory} is not a directory", file=err)
         return 1
     out_dir = Path(args.output) if args.output else directory
-    # every readable app's files, except files already in the requested target format; PDFs
-    # only on request (see the module docstring)
+    # every readable app's files (package folders such as X.cnote included), except files
+    # already in the requested target format; PDFs only on request (see the module docstring)
     wanted = {ext for f in _formats.readable()
               if f.id != args.target and (f.id != "pdf" or getattr(args, "include_pdf", False))
               for ext in f.input_extensions}
-    files = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in wanted)
+    files = sorted(p for p in directory.iterdir() if p.suffix.lower() in wanted and (p.is_file() or p.is_dir()))
     if not files:
         print(f"no note files to convert in {directory} (looked for {', '.join(sorted(wanted))})", file=out)
         return 0
@@ -241,7 +265,7 @@ def _cmd_batch(args: argparse.Namespace, out: Any, err: Any) -> int:
     failed = 0
     for path in files:
         try:
-            result = convert(path.read_bytes(), path.name, options)
+            result = convert(read_input(path), path.name, options)
             target = out_dir / result.filename
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(result.data)

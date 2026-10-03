@@ -13,6 +13,7 @@ apps open as their own.
 | GoodNotes 5 / 6 | `.goodnotes` | yes | yes |
 | Notability 4 to 16 | `.note` | yes | yes |
 | Noteful (files of 1.4.25 to 1.4.33) | `.noteful` | yes | yes (not yet opened in Noteful, see below) |
+| CollaNote | `.cnote` (the file, or the package folder zipped) | yes | not yet (needs tests in the app) |
 | PDF | `.pdf` | yes: ink, shape, highlight and text annotations become editable | yes: ink drawn into the pages, or kept as editable ink annotations |
 
 PDF works in both directions: written PDFs carry the ink either flattened into the pages or as
@@ -53,6 +54,23 @@ GoodNotes notebooks written by GoodNotes 5 and 6 up to the 2026 builds (containe
 | Images | PNG/JPEG kept; a crop is undone (the whole picture at the scale shown), a flip is dropped | PNG/JPEG kept with rotation; PDF stickers dropped |
 | PDF pages and paper | PDF pages carried; Noteful templates carried as the PDF the app rendered | PDF pages carried; plain pages get generated paper PDFs |
 | Layers, bookmarks, audio, tags | Layers merged; the rest dropped | Not written |
+
+### CollaNote (read only)
+
+| Content | CollaNote to GoodNotes / Notability |
+|---|---|
+| Handwriting | Editable ink with per-point widths (GoodNotes then flattens them to one width per stroke) |
+| Pens | Pen, translucent wide pen (keeps its transparency) and highlighter; pen types not identified yet are read as pens, with a warning |
+| Imported PDFs | Carried as PDF-backed pages; blank pages inserted between slides keep the slides' size |
+| Blank paper | Page size from the note (a CollaNote A4 notebook stays A4); ruled paper is kept as a hint |
+| Images (PNG/JPEG) | Kept, position and size (rotation direction unverified) |
+| Text boxes | Kept with font, size and colour (layout inferred from one sample) |
+| Notes from CollaNote 1.x (Apple PencilKit ink) | Read on a best-effort basis (no sample yet), with a warning |
+| Audio, bookmarks | Dropped, with a warning |
+
+Both container layouts are read: the `.cnote` ZIP file and the newer `.cnote` package folder,
+which arrives zipped (`Note.cnote.zip` converts as is). See `docs/collanote.md` for what is
+verified and what is not.
 
 ### PDF
 
@@ -116,6 +134,9 @@ deployment.
 python3 -m gnnote convert Notebook.goodnotes                  # writes Notebook.note next to it
 python3 -m gnnote convert Note.note -o out/ --title "Maths"   # writes out/Note.goodnotes
 python3 -m gnnote convert Notebook.goodnotes --paper pdf --no-pressure --simplify 0.3
+python3 -m gnnote convert Lecture.cnote --to goodnotes          # CollaNote -> GoodNotes (default: Notability);
+                                                              # a .cnote package folder works too
+python3 -m gnnote formats                                     # the supported apps, read / write
 python3 -m gnnote info Note.note [--json]                     # format, title, pages, counts, warnings
 python3 -m gnnote convert Notebook.noteful --to goodnotes      # writes Notebook.goodnotes
 python3 -m gnnote batch ~/Notes -o ~/Converted --to notability
@@ -185,7 +206,9 @@ checks that commit out into `tests/.samples/` on first use, or uses the director
 `GNNOTE_SAMPLES` (one sub-directory per repository, left untouched even when it sits at
 another commit, in which case the exact per-file expectations are withheld and only the
 invariants run; the pytest header reports it). Tests that need a repository that is
-unavailable are skipped; `GNNOTE_OFFLINE=1` disables cloning. Oracle parsers (goodparse,
+unavailable are skipped; `GNNOTE_OFFLINE=1` disables cloning. Large repositories are checked
+out sparsely (`SPARSE`), and single large files (`LARGE_FILES`, a 100 MB CollaNote notebook)
+are only downloaded with `GNNOTE_LARGE_SAMPLES=1`, so CI skips them. Oracle parsers (goodparse,
 parser-for-goodnotes) run in a subprocess with their own `PYTHONPATH` and are never
 imported into the package; parser-for-goodnotes needs `numpy`.
 
@@ -210,6 +233,8 @@ test with Chromium, once per pull-request change and on pushes to `main`; `pages
   what the 2026 GoodNotes builds (container schema 25/35) changed in page binding, strokes and elements.
 * `docs/notability-format.md`: the `.note` package and its `Session.plist` object graph.
 * `docs/noteful.md`: the `.noteful` container, its records, ink and objects, and gnnote's mapping.
+* `docs/collanote.md`: CollaNote's `.cnote` containers, stroke protobuf and geometry, Apple
+  PencilKit drawings (`gnnote/pencilkit.py`), what the reader verifies and what it infers.
 * `docs/pdf.md`: what the PDF writer produces and what the PDF reader converts, byte by byte.
 * `docs/ecosystem.md`: import/export capabilities of both apps, existing tools, licensing.
 * `tests/e2e/README.md`: the browser end-to-end test.
@@ -226,10 +251,11 @@ separate-process test oracles (see `NOTICE.md`):
 [notability-reader](https://github.com/xrayshan/notability-reader),
 [notesconverter](https://github.com/samuelsadok/notesconverter),
 [Notability-notes-converter](https://github.com/nokcha0/Notability-notes-converter),
-[svg2notability](https://github.com/jvns/svg2notability) and
-[denotability](https://github.com/miroreo/denotability).
-GoodNotes, Notability and Noteful are trademarks of their respective owners; this project is not
-affiliated with either.
+[svg2notability](https://github.com/jvns/svg2notability),
+[denotability](https://github.com/miroreo/denotability) and
+[collanote_cnote_to_pdf_converter](https://github.com/alarsama/collanote_cnote_to_pdf_converter).
+GoodNotes, Notability, Noteful, CollaNote and the other apps named here are trademarks of their
+respective owners; this project is not affiliated with any of them.
 
 ## Licence
 

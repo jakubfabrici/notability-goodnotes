@@ -10,9 +10,20 @@ never modified: :meth:`SampleSet.repo_commit` tells the tests which commit it is
 :meth:`SampleSet.expected_for` withholds exact per-file expectations from a repository that
 sits at a different commit (the invariants still apply).  Tests that need a repository
 that is unavailable are skipped; ``GNNOTE_OFFLINE=1`` disables cloning.
+
+Single files too large for every test run (:data:`LARGE_FILES`, e.g. a 100 MB notebook kept
+in Git LFS) are used when they sit directly under the samples directory, and downloaded
+there from a URL naming a pinned commit only when ``GNNOTE_LARGE_SAMPLES=1`` is set (and
+``GNNOTE_OFFLINE`` is not); a file is used only when its size and SHA-256 match the pin.
+CI never sets the variable, so those tests skip there.
+
+Some sample repositories carry no licence (``YTU-Archive``, ``Flashcard`` and the notebook
+in :data:`LARGE_FILES`): their files are test inputs fetched at test time only and are
+never committed to this repository.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -49,12 +60,34 @@ REPOS: Dict[str, Tuple[str, str]] = {
                  "f16eb8d2a425637aab629e6cc90c00a18f17009f"),
     "denotability": ("https://github.com/miroreo/denotability",
                      "7c44cfd5627b4875b7bcbd262c3997fb130b001e"),
+    # CollaNote notes (no licence; test input only): 7 ZIP notes and 3 format-2 packages
+    # of 2025-2026 over lecture slides, in 1-2/Semiconductor/slide.
+    "YTU-Archive": ("https://github.com/enisogdum/YTU-Archive",
+                    "81e30df7e8f54a4d7a178eb0baef97f56c12d0e2"),
+    # Cards.cards (no licence; test input only): a bplist holding 854 PencilKit drawings
+    # written on iOS (lasso transforms, deleted strokes, one version-2 drawing).
+    "Flashcard": ("https://github.com/r987r/Flashcard",
+                  "f74f6e8df09265f5a0f3cd2def49a5d9353bd40d"),
 }
 
 # Repositories too large to check out whole: only these directories are checked out (a
 # partial clone without blobs plus a cone-mode sparse checkout, so only their files are
 # downloaded).  Repositories not listed here are checked out completely.
-SPARSE: Dict[str, Tuple[str, ...]] = {}
+SPARSE: Dict[str, Tuple[str, ...]] = {
+    "YTU-Archive": ("1-2/Semiconductor/slide",),  # 63 MB of a much larger repository
+}
+
+# name -> (URL at a pinned commit, SHA-256, size in bytes); see the module docstring.
+LARGE_FILES: Dict[str, Tuple[str, str, int]] = {
+    # Kinjalrk2k/100-Days-of-Machine-Learning-Campus-X @ 22642ef, _backup/Notes.cnote (Git LFS,
+    # no licence; test input only): a 112-page CollaNote notebook on lined paper, without PDFs.
+    "collanote-notebook.cnote": (
+        "https://media.githubusercontent.com/media/Kinjalrk2k/100-Days-of-Machine-Learning-Campus-X/"
+        "22642ef38b5c61baa48446cb406ebd56c0870f2b/_backup/Notes.cnote",
+        "66ac18e02f18fddf83015247d41f6919a8de0f84cd6ed51c33551ce0f5061445",
+        100_110_925,
+    ),
+}
 
 
 def _samples_root() -> Path:
@@ -112,6 +145,42 @@ def _clone(root: Path, name: str) -> Optional[Path]:
     return target
 
 
+def fetch_large_file(target: Path, url: str, sha256: str, size: int, timeout: float = 600.0) -> None:
+    """Download ``url`` to ``target``; keep it only when its size and SHA-256 match the pin.
+
+    Raises ``OSError`` / ``ValueError`` on failure (no partial file is left behind).
+    """
+    import urllib.request
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    part = target.with_name(target.name + ".part")
+    digest = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response, open(part, "wb") as out:
+            while True:
+                chunk = response.read(1 << 20)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                out.write(chunk)
+                if out.tell() > size:
+                    raise ValueError(f"{url} is larger than the pinned {size} bytes")
+        if part.stat().st_size != size or digest.hexdigest() != sha256:
+            raise ValueError(f"{url} does not match its pinned SHA-256")
+        part.replace(target)
+    finally:
+        if part.exists():
+            part.unlink()
+
+
+def _sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _git_head(path: Path) -> Optional[str]:
     """HEAD of the repository rooted exactly at ``path`` (``None`` for a plain directory)."""
     if not (path / ".git").exists():
@@ -135,6 +204,7 @@ class SampleSet:
     def __init__(self, root: Path):
         self.root = root
         self._commits: Dict[str, Optional[str]] = {}
+        self._large: Dict[str, bool] = {}
 
     def repo(self, name: str) -> Path:
         found = _find_repo(self.root, name) or _clone(self.root, name)
@@ -170,7 +240,11 @@ class SampleSet:
         name = self.repo_name_of(path)
         if name is not None and self.at_pinned_commit(name) is False:
             return None
-        return table.get(Path(path).name)
+        import unicodedata
+
+        base = Path(path).name
+        found = table.get(base)
+        return found if found is not None else table.get(unicodedata.normalize("NFC", base))  # macOS: NFD names
 
     def goodnotes_files(self) -> List[Path]:
         files: List[Path] = []
@@ -201,6 +275,39 @@ class SampleSet:
             pytest.skip("Notability 10.4 template note not available")
         return path
 
+    def collanote_notes(self) -> List[Path]:
+        """YTU-Archive's CollaNote notes: ``.cnote`` ZIP files and format-2 package directories."""
+        folder = self.repo("YTU-Archive") / "1-2" / "Semiconductor" / "slide"
+        notes = sorted(folder.glob("*.cnote")) if folder.is_dir() else []
+        if not notes:
+            pytest.skip("no CollaNote sample notes available")
+        return notes
+
+    def pkdrawing_fixtures(self) -> List[Path]:
+        """inkterop's PencilKit fixtures (CC0), each next to its ``.truth.json``."""
+        folder = self.repo("inkterop") / "core" / "tests" / "fixtures" / "pkdrawing"
+        blobs = sorted(folder.glob("*.pkdrawing")) if folder.is_dir() else []
+        if not blobs:
+            pytest.skip("inkterop PencilKit fixtures not available")
+        return blobs
+
+    def large_file(self, name: str) -> Path:
+        """A :data:`LARGE_FILES` entry, verified against its pin (downloaded on request)."""
+        url, sha256, size = LARGE_FILES[name]
+        path = self.root / name
+        if not path.is_file():
+            if os.environ.get("GNNOTE_OFFLINE") or not os.environ.get("GNNOTE_LARGE_SAMPLES"):
+                pytest.skip(f"large sample {name} not available (GNNOTE_LARGE_SAMPLES=1 downloads it)")
+            try:
+                fetch_large_file(path, url, sha256, size)
+            except Exception as exc:  # noqa: BLE001 - offline or blocked: skip
+                pytest.skip(f"large sample {name} could not be downloaded ({exc})")
+        if name not in self._large:
+            self._large[name] = path.stat().st_size == size and _sha256_of(path) == sha256
+        if not self._large[name]:
+            pytest.skip(f"{path} does not match the pinned SHA-256 of {name}")
+        return path
+
 
 def pytest_report_header(config: pytest.Config) -> List[str]:
     """Show which reference clones are present and whether they sit at the pinned commit."""
@@ -218,6 +325,9 @@ def pytest_report_header(config: pytest.Config) -> List[str]:
         else:
             state = f"{commit[:7]} (pinned commit is {sha[:7]}; exact per-file expectations withheld)"
         lines.append(f"  {name}: {state}")
+    for name in LARGE_FILES:
+        if (root / name).is_file():
+            lines.append(f"  {name}: present (checked against its pinned SHA-256 when used)")
     if lines:
         lines.insert(0, f"reference samples: {root}")
     return lines

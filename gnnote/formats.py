@@ -86,6 +86,29 @@ def _sniff_noteful(data: bytes, names: Optional[List[str]]) -> bool:
         and data[-16:-12] == b"\xaa\xbb\xcc\xde"
 
 
+_CNOTE_MEMBERS = ("note without pdf.cnote", "basenote.cdat", "manifest.cnm")
+_CNOTE_JSON_KEYS = (b'"_dkDrawing"', b'"importedPdfDatas"', b'"strokeCountBeforeSaving"')
+
+
+def _sniff_collanote(data: bytes, names: Optional[List[str]]) -> bool:
+    """A CollaNote note: its member names, at the top or under one ``X.cnote/`` folder (a zipped
+    package), a ZIP holding a single ``.cnote`` file, or a bare JSON note."""
+    if names is None:
+        head = data[:4096].lstrip(b"\xef\xbb\xbf \t\r\n")
+        return head[:1] == b"{" and any(key in data for key in _CNOTE_JSON_KEYS)
+    files = [n for n in names if not (n.endswith("/") or n.startswith("__MACOSX/")
+                                      or n.rsplit("/", 1)[-1].startswith("._") or n.endswith(".DS_Store"))]
+    for name in files:
+        parts = name.split("/")
+        if len(parts) > 2:
+            continue
+        base = parts[-1]
+        stem, dot, ext = base.rpartition(".")
+        if base in _CNOTE_MEMBERS or (dot and ext.lower() == "cpage" and stem.isdigit() and len(stem) <= 9):
+            return True
+    return len(files) == 1 and files[0].lower().endswith(".cnote")
+
+
 def _sniff_pdf(data: bytes, names: Optional[List[str]]) -> bool:
     # ``%PDF`` within the first 1024 bytes (readers tolerate junk before the header).  A ZIP
     # archive -- readable or damaged (``PK`` signature) -- is never a PDF, even when its
@@ -113,6 +136,12 @@ FORMATS: Dict[str, NoteFormat] = {
             input_extensions=(".noteful",), sniff=_sniff_noteful,
             reader="gnnote.noteful.reader:read_noteful",
             writer="gnnote.noteful.writer:write_noteful",
+        ),
+        # Read only: writing .cnote files needs tests in the app first (docs/collanote.md).
+        NoteFormat(
+            id="collanote", name="CollaNote", extension=".cnote",
+            input_extensions=(".cnote",), sniff=_sniff_collanote,
+            reader="gnnote.collanote.reader:read_cnote",
         ),
         NoteFormat(
             id="pdf", name="PDF", extension=".pdf",
