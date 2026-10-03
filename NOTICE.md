@@ -47,3 +47,16 @@ implementation written from the byte-level research notes in `docs/`.
   **FWebViewer** (https://github.com/c0lbarator/FWebViewer, MIT, Copyright (c) 2025 Zaripov
   Bulat). The reader was written from those facts and the sample file; no code was copied.
   flexcil-codex-plugin's codec runs only as a separate-process test oracle.
+* **reMarkable** (`gnnote/remarkable/`, `docs/remarkable.md`): `gnnote/remarkable/scene.py`
+  is a standard-library re-implementation of the part of **rmscene**'s v6 block reader that
+  gnnote needs (block and tag layout, CRDT ids and sequences, lines, glyph ranges, root text,
+  scene info), adapted from rmscene (https://github.com/ricklupton/rmscene, MIT License,
+  Copyright (c) 2023 Rick Lupton). The palette and the line heights of typed text come from
+  **rmc** (https://github.com/ricklupton/rmc, MIT License, Copyright (c) 2023 Rick Lupton).
+  The MIT permission notice quoted for inkterop above applies to these adapted parts in the
+  same way. The stored-width rule and the Paper Pro geometry are facts from inkterop's
+  `docs/formats/remarkable.md` (CC BY 4.0). The `.rmdoc` member layout, `redir` and the
+  226-dpi PDF mapping are facts from **RM-Sticker-Press**
+  (https://github.com/szainababbas/RM-Sticker-Press, GPL-3.0); no code from it was used, and
+  its sample files are only read by the tests from its own checkout. rmscene runs only as a
+  separate-process test oracle.

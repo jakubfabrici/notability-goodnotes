@@ -55,6 +55,13 @@ REPOS: Dict[str, Tuple[str, str]] = {
     # Flexcil: an MIT Python codec, run in a subprocess as a test oracle
     "flexcil-codex-plugin": ("https://github.com/jeonghyeon-net/flexcil-codex-plugin",
                              "b04abb543d72031e2c1be2ef7c7fc5bd52585c30"),
+    # reMarkable: rmscene (MIT) is the v6 oracle (subprocess) and holds sample pages; rmc (MIT)
+    # holds more pages; RM-Sticker-Press (GPL-3.0) is used only for its .rmdoc sample files,
+    # read as external test data (never copied into this repository)
+    "rmscene": ("https://github.com/ricklupton/rmscene", "d7d86ca3a8ca4965d911886a1660bc8acf654c1a"),
+    "rmc": ("https://github.com/ricklupton/rmc", "da87813a31496d156ca6ea8a27bf5128670fb45a"),
+    "RM-Sticker-Press": ("https://github.com/szainababbas/RM-Sticker-Press",
+                         "4ecc7387a07ca384e62cfefd1d670a548cea5314"),
 }
 
 # Repositories too large to check out whole: only these directories are checked out (a
@@ -63,6 +70,9 @@ REPOS: Dict[str, Tuple[str, str]] = {
 SPARSE: Dict[str, Tuple[str, ...]] = {
     "flexcil-backup-viewer": ("puplic",),  # cone mode adds the top-level files, forms.flx among them
     "flexcil-codex-plugin": ("plugins/flexcil-codex-plugin/src",),
+    "rmscene": ("src", "tests/data"),
+    "rmc": ("tests/rm",),
+    "RM-Sticker-Press": ("RM-sticker-press/samples",),
 }
 
 
@@ -216,6 +226,26 @@ class SampleSet:
         files = sorted(p for p in self.repo("flexcil-backup-viewer").glob("*.flx") if p.is_file())
         if not files:
             pytest.skip("no .flx sample files available")
+        return files
+
+    def remarkable_pages(self) -> List[Path]:
+        """reMarkable v6 pages: rmscene's and rmc's test pages and inkterop's CC0 captures."""
+        files: List[Path] = []
+        for name, sub in (("rmscene", "tests/data"), ("rmc", "tests/rm"),
+                          ("inkterop", "core/tests/fixtures/remarkable")):
+            try:
+                files += sorted((self.repo(name) / sub).glob("*.rm"))
+            except pytest.skip.Exception:
+                pass
+        if not files:
+            pytest.skip("no .rm sample files available")
+        return files
+
+    def remarkable_documents(self) -> List[Path]:
+        """reMarkable .rmdoc documents: RM-Sticker-Press's samples (external test data)."""
+        files = sorted((self.repo("RM-Sticker-Press") / "RM-sticker-press" / "samples").glob("*.rmdoc"))
+        if not files:
+            pytest.skip("no .rmdoc sample files available")
         return files
 
     def notability_template(self) -> Path:

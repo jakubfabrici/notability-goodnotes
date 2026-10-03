@@ -98,6 +98,15 @@ def _sniff_flexcil(data: bytes, names: Optional[List[str]]) -> bool:
                for n in names)
 
 
+def _sniff_remarkable(data: bytes, names: Optional[List[str]]) -> bool:
+    """reMarkable: a v6 page (``.rm`` header) or an ``.rmdoc`` (``<uuid>.content`` + metadata/pages)."""
+    if names is None:
+        return data.startswith(b"reMarkable .lines file, version=")
+    top = [n for n in names if "/" not in n]
+    return any(n.endswith(".content") for n in top) and (
+        any(n.endswith(".metadata") for n in top) or any(n.endswith(".rm") for n in names))
+
+
 FORMATS: Dict[str, NoteFormat] = {
     f.id: f
     for f in (
@@ -122,6 +131,11 @@ FORMATS: Dict[str, NoteFormat] = {
             id="flexcil", name="Flexcil", extension=".flx",
             input_extensions=(".flx", ".flex"), sniff=_sniff_flexcil,
             reader="gnnote.flexcil.reader:read_flexcil",
+        ),
+        NoteFormat(
+            id="remarkable", name="reMarkable", extension=".rmdoc",
+            input_extensions=(".rmdoc", ".rm"), sniff=_sniff_remarkable,
+            reader="gnnote.remarkable.reader:read_remarkable",
         ),
     )
 }

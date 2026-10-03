@@ -62,6 +62,8 @@ gnnote/
   nebo/bink.py           MyScript BINK ink -> strokes + tag table
   nebo/reader.py         read_nebo(data: bytes) -> Document            (MyScript Notes / Nebo, read only)
   flexcil/reader.py      read_flexcil(data: bytes, document=None) -> Document  (Flexcil .flx / .flex, read only)
+  remarkable/scene.py    reMarkable v6 scene: tagged blocks, CRDT order, lines, glyphs, text
+  remarkable/reader.py   read_remarkable(data: bytes) -> Document      (reMarkable .rmdoc / .rm, read only)
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
   server.py              stdlib HTTP server: static web UI + POST /api/convert
@@ -111,6 +113,7 @@ gnnote.notability.writer.write_note(doc: Document, options: Options) -> bytes
 gnnote.nebo.reader.read_nebo(data: bytes) -> Document                 # read only
 gnnote.flexcil.reader.read_flexcil(data: bytes, document=None) -> Document   # read only
 gnnote.flexcil.reader.list_flexcil_documents(data: bytes) -> List[FlexcilEntry]
+gnnote.remarkable.reader.read_remarkable(data: bytes) -> Document     # read only
 ```
 
 Every format is one entry of `gnnote/formats.py` (`FORMATS`): id, name, extensions, a content
@@ -369,6 +372,8 @@ Their byte layouts, mappings and open questions are in their own notes:
   pressure width law; the BDOM layout data is not decoded).
 * Flexcil `.flx` / `.flex`: `docs/flexcil.md` (width-normalised ink, shapes as strokes, PDF
   backgrounds, text boxes, images; one document per backup).
+* reMarkable `.rmdoc` / `.rm`: `docs/remarkable.md` (v6 scenes ported from rmscene, stored
+  rendered widths, 226-dpi pages or PDF pages, highlights, approximate typed-text anchors).
 
 ## 5. Web UI (`web/`)
 
@@ -427,7 +432,9 @@ Their byte layouts, mappings and open questions are in their own notes:
 * `tests/conftest.py`: fixture `samples` → directory with the reference repositories
   (`franzthiemann/goodparse`, `Kaih1825/parser-for-goodnotes`, `HuyNguyenAu/notability-to-svg`,
   `xrayshan/notability-reader`, `jvns/svg2notability`, `samuelsadok/notesconverter`,
-  `nokcha0/Notability-notes-converter`, `cable729/inkterop`, `miroreo/denotability`), taken from `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
+  `nokcha0/Notability-notes-converter`, `cable729/inkterop`, `miroreo/denotability`, and for the
+  other apps `janptn/flexcil-backup-viewer`, `jeonghyeon-net/flexcil-codex-plugin`,
+  `ricklupton/rmscene`, `ricklupton/rmc`, `szainababbas/RM-Sticker-Press`), taken from `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
   `tests/.samples/` (skipped when offline). Oracle parsers run **in a subprocess** with their
   own `PYTHONPATH` (never imported into our package).
 * Unit tests per primitive (hand-built vectors + round trips). Reader tests over every sample

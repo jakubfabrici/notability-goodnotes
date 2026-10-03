@@ -45,5 +45,17 @@ export const FORMATS = [
     "readable": true,
     "writable": false,
     "defaultTarget": "notability"
+  },
+  {
+    "id": "remarkable",
+    "name": "reMarkable",
+    "extension": ".rmdoc",
+    "inputExtensions": [
+      ".rmdoc",
+      ".rm"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
   }
 ];
