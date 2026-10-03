@@ -1,8 +1,9 @@
 # gnnote
 
 Converts notes between **GoodNotes** (`.goodnotes`) and **Notability** (`.note`) in both
-directions while keeping the handwriting **editable** in the target app: strokes are written
-as native ink, not as a flattened PDF or image.
+directions, and from **Microsoft OneNote** (`.one` sections and notebook `.zip` downloads,
+read only) to either, while keeping the handwriting **editable** in the target app: strokes
+are written as native ink, not as a flattened PDF or image.
 
 Neither app imports the other's format, and both export only PDF or images for exchange.
 gnnote reads the real container formats (documented in `docs/`) and writes files the other
@@ -29,6 +30,24 @@ app opens as its own.
 GoodNotes notebooks written by GoodNotes 5 and 6 up to the 2026 builds (container schema 24,
 25 and 35) and Notability notes from version 4 to 16 are read.
 
+### OneNote (read only)
+
+| OneNote content | In GoodNotes / Notability |
+|---|---|
+| Handwriting | Editable ink: position, colour, transparency, pen width; pressure as per-point widths (approximate curve) |
+| Highlighter | Kept as highlighter |
+| Handwriting written inline in typed text | Ink, placed approximately along its lines |
+| Pictures (PNG/JPEG), PDF printouts | Images (a printout as one picture per page; the PDF itself is not carried over) |
+| Typed text and page titles | Text boxes with formatting; positions and line breaks approximate (OneNote reflows text itself) |
+| Pages | One page each; OneNote's unbounded page grows to hold its content |
+| Notebook `.zip` | All sections merged into one document, in the notebook's section order |
+
+Dropped with a warning: tables, math, note tags, attached files, recordings, other picture
+formats. Refused with an explanation: password-protected sections, `.onepkg` packages, a
+`.onetoc2` on its own. Writing OneNote is not supported. On an iPad, download the notebook
+folder from onedrive.live.com in Safari (select the folder, *Download*) and convert the
+`.zip`; see `docs/onenote.md` for the steps and the details.
+
 Dropped, with a warning in the output: audio recordings, stickers / sticky notes, stroke
 dash patterns (drawn solid), Notability vector shapes, math objects, image crops and flips.
 GoodNotes auto-shapes are converted silently: they become ordinary strokes drawn along the
@@ -51,8 +70,9 @@ devices.
 settings are needed first: Settings -> Pages -> Source "GitHub Actions", and either a public
 repository or a paid GitHub plan (GitHub Free has no Pages for private repositories). Until
 then the workflow ends with a notice and deploys nothing. Open the page on the iPad (or any
-browser), choose or drop a `.goodnotes` or `.note` file, pick the options, press Convert and
-download or share the result into the other app. The conversion runs in the browser with
+browser), choose or drop a `.goodnotes`, `.note` or OneNote `.one` / notebook `.zip` file,
+pick the target app and options, press Convert and download or share the result into the
+other app. The conversion runs in the browser with
 Pyodide (about 13.5 MB downloaded on first use); files never leave the device.
 
 To serve the page yourself:
@@ -73,6 +93,8 @@ python3 -m gnnote convert Note.note -o out/ --title "Maths"   # writes out/Note.
 python3 -m gnnote convert Notebook.goodnotes --paper pdf --no-pressure --simplify 0.3
 python3 -m gnnote info Note.note [--json]                     # format, title, pages, counts, warnings
 python3 -m gnnote batch ~/Notes -o ~/Converted --to notability
+python3 -m gnnote convert "Biology.zip" --to goodnotes          # a OneNote notebook from OneDrive
+python3 -m gnnote formats                                     # the apps and what is read / written
 ```
 
 Exit codes: 0 success, 1 a file could not be read or converted, 2 usage error. Warnings go
@@ -133,7 +155,10 @@ another commit, in which case the exact per-file expectations are withheld and o
 invariants run; the pytest header reports it). Tests that need a repository that is
 unavailable are skipped; `GNNOTE_OFFLINE=1` disables cloning. Oracle parsers (goodparse,
 parser-for-goodnotes) run in a subprocess with their own `PYTHONPATH` and are never
-imported into the package; parser-for-goodnotes needs `numpy`.
+imported into the package; parser-for-goodnotes needs `numpy`. The OneNote samples are
+sparse checkouts (`SPARSE`); repositories listed in `LARGE` (a 46 MB OneNote section) are
+only cloned with `GNNOTE_LARGE_SAMPLES=1`. The one2html renderer serves as a OneNote oracle
+when its binary is found (`GNNOTE_ONE2HTML`, `PATH` or `$GNNOTE_SAMPLES/one2html/target/release/`).
 
 Browser end-to-end test (Playwright, see `tests/e2e/README.md`):
 
@@ -155,6 +180,8 @@ test with Chromium, once per pull-request change and on pushes to `main`; `pages
 * `docs/goodnotes-v35-binding.md`, `docs/goodnotes-v35-strokes.md`, `docs/goodnotes-v35-elements.md`:
   what the 2026 GoodNotes builds (container schema 25/35) changed in page binding, strokes and elements.
 * `docs/notability-format.md`: the `.note` package and its `Session.plist` object graph.
+* `docs/onenote.md`: OneNote input: getting the files from an iPad, what converts, the
+  container and ink facts the reader relies on, why writing OneNote is not supported.
 * `docs/ecosystem.md`: import/export capabilities of both apps, existing tools, licensing.
 * `tests/e2e/README.md`: the browser end-to-end test.
 
@@ -172,8 +199,17 @@ separate-process test oracles (see `NOTICE.md`):
 [Notability-notes-converter](https://github.com/nokcha0/Notability-notes-converter),
 [svg2notability](https://github.com/jvns/svg2notability) and
 [denotability](https://github.com/miroreo/denotability).
-GoodNotes and Notability are trademarks of their respective owners; this project is not
-affiliated with either.
+The OneNote reader follows Microsoft's published [MS-ONESTORE], [MS-FSSHTTPB] and [MS-ONE]
+specifications; its ink facts were checked against the
+[onenote.rs](https://github.com/msiemens/onenote.rs) wiki and its tests use
+[one2html](https://github.com/msiemens/one2html) as an oracle and sample files from onenote.rs,
+[Joplin](https://github.com/laurent22/joplin),
+[Interop-TestSuites](https://github.com/OfficeDev/Interop-TestSuites),
+[libmson](https://github.com/blu-base/libmson),
+[Obsidian Importer](https://github.com/obsidianmd/obsidian-importer) and
+[py-onenote-parser](https://github.com/Kev744/py-onenote-parser).
+GoodNotes, Notability and OneNote are trademarks of their respective owners; this project is
+not affiliated with any of them.
 
 ## Licence
 

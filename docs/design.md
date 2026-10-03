@@ -58,6 +58,9 @@ gnnote/
   notability/archivebuilder.py NSKeyedArchiver object-graph builder (write)
   notability/reader.py   read_note(data: bytes) -> Document
   notability/writer.py   write_note(doc: Document, options: Options | None = None) -> bytes
+  onenote/               read only: common.py (bounded bytes, property sets), native.py (desktop
+                         revision store), package.py (OneDrive packaging), schema.py, ink.py,
+                         reader.py read_onenote(data: bytes) -> Document  (docs/onenote.md)
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
   server.py              stdlib HTTP server: static web UI + POST /api/convert
@@ -104,6 +107,7 @@ gnnote.goodnotes.reader.read_goodnotes(data: bytes) -> Document
 gnnote.goodnotes.writer.write_goodnotes(doc: Document, options: Options) -> bytes
 gnnote.notability.reader.read_note(data: bytes) -> Document
 gnnote.notability.writer.write_note(doc: Document, options: Options) -> bytes
+gnnote.onenote.reader.read_onenote(data: bytes) -> Document   # .one (both packagings) or a notebook .zip
 ```
 
 Primitives:

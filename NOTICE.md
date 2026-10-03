@@ -25,3 +25,23 @@ implementation written from the byte-level research notes in `docs/`.
   into the `gnnote` package.
 * Other reference material (notability-to-svg, GPL-3.0; inkref and jojo-notes, no licence)
   informed the documented file-format facts only; no code was copied.
+* The OneNote reader (`gnnote/onenote/`) was written from Microsoft's [MS-ONESTORE],
+  [MS-FSSHTTPB] and [MS-ONE] specifications, which Microsoft publishes under the Open
+  Specification Promise, and from the reverse-engineered ink layout of the **onenote.rs**
+  wiki (https://github.com/msiemens/onenote.rs/wiki, facts only, re-verified on sample
+  files; see `docs/onenote.md`). The pressure-to-width factor `1.5 p + 0.25` is the one
+  WPF's ink renderer (https://github.com/dotnet/wpf, MIT) uses; it is a formula, no code was
+  taken. No code from onenote.rs (MPL-2.0), Joplin (AGPL-3.0 / MPL-2.0), oneconv or
+  OneNoteViewer (GPL-3.0), libmson (LGPL-2.1), OfficeIMO or the Obsidian Importer (MIT) was
+  copied or adapted.
+* **one2html** (https://github.com/msiemens/one2html, MIT) is used **only as a test oracle**:
+  the OneNote tests run its binary in a separate process when it is available. Two layout
+  facts were read from its source (where a page title is drawn, and that a nested ink
+  container is placed by its own offsets); no code was taken.
+* OneNote sample files of onenote.rs (MPL-2.0, including Joplin fixtures under AGPL-3.0),
+  Joplin (https://github.com/laurent22/joplin), Microsoft Interop-TestSuites
+  (https://github.com/OfficeDev/Interop-TestSuites, MIT), libmson
+  (https://github.com/blu-base/libmson, LGPL-2.1), the Obsidian Importer
+  (https://github.com/obsidianmd/obsidian-importer, MIT, including Apache-2.0 Apache Tika
+  samples) and py-onenote-parser (https://github.com/Kev744/py-onenote-parser, MIT) are
+  fetched by the test suite at pinned commits and are not part of this repository.
