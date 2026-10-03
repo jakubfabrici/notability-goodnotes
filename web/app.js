@@ -12,6 +12,13 @@ import { FORMATS } from "./formats.js";
 
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
 const STAT_ORDER = ["pages", "strokes", "images", "texts", "pdfs"];
+// target format -> element holding the options that only apply to it
+const TARGET_OPTIONS = { notability: "opts-notability", pdf: "opts-pdf" };
+const MIME_TYPES = {
+  notability: "application/x-notability-note",
+  goodnotes: "application/x-goodnotes",
+  pdf: "application/pdf",
+};
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -25,8 +32,7 @@ const el = {
   target: $("target"),
   supported: $("supported"),
   fileError: $("file-error"),
-  paperFieldset: $("paper-fieldset"),
-  paperNa: $("paper-na"),
+  optsNone: $("opts-none"),
   pressure: $("pressure"),
   simplify: $("simplify"),
   convert: $("convert"),
@@ -158,7 +164,7 @@ function populateTargets(source) {
   }
   const ids = Array.from(el.target.options, (o) => o.value);
   const src = formatById(source);
-  const wanted = [previous, src && src.defaultTarget].find((id) => id && ids.includes(id));
+  const wanted = [previous, src && src.defaultTarget, "notability"].find((id) => id && ids.includes(id));
   if (wanted) el.target.value = wanted;
 }
 
@@ -166,9 +172,9 @@ function updateDirection() {
   const src = formatById(state.file ? sourceFormatOf(state.file.name) : null);
   const dst = formatById(el.target.value);
   el.fileDirection.textContent = src && dst ? t("file.direction", { from: src.name, to: dst.name }) : "";
-  const paperApplies = !!dst && dst.id === "notability";
-  el.paperFieldset.disabled = !paperApplies;
-  show(el.paperNa, !paperApplies);
+  const group = dst ? TARGET_OPTIONS[dst.id] : null;
+  for (const id of Object.values(TARGET_OPTIONS)) show($(id), id === group);
+  show(el.optsNone, !!dst && !group);
 }
 
 function readOptions() {
@@ -177,6 +183,9 @@ function readOptions() {
   if (!isFinite(simplify) || simplify < 0) simplify = 0;
   const options = { paper: paper, pressure: !!el.pressure.checked, simplify: simplify };
   if (el.target.value) options.target = el.target.value;
+  if (options.target === "pdf") {
+    options.pdf_ink = (document.querySelector('input[name="pdf_ink"]:checked') || {}).value || "flatten";
+  }
   return options;
 }
 
@@ -302,8 +311,8 @@ el.reset.addEventListener("click", () => {
   show(el.reset, false);
   hideError();
   el.convert.textContent = t("convert");
-  el.paperFieldset.disabled = false;
-  show(el.paperNa, false);
+  populateTargets(null);
+  updateDirection();
   updateConvertButton();
 });
 
@@ -449,6 +458,7 @@ async function convertViaServer(file, options) {
     simplify: String(options.simplify),
   });
   if (options.target) q.set("to", options.target);
+  if (options.pdf_ink) q.set("pdf_ink", options.pdf_ink);
   const form = new FormData();
   form.append("file", file, file.name);
   const r = await fetch(new URL("api/convert?" + q.toString(), location.href).href, {
@@ -547,8 +557,7 @@ async function convertViaWorker(file, options) {
   });
   worker.postMessage({ type: "convert", id: id, name: file.name, buffer: buffer, options: options }, [buffer]);
   const msg = await done;
-  const mime = { notability: "application/x-notability-note", goodnotes: "application/x-goodnotes" }[msg.targetFormat]
-    || "application/octet-stream";
+  const mime = MIME_TYPES[msg.targetFormat] || "application/octet-stream";
   return {
     name: msg.name,
     blob: new Blob([msg.buffer], { type: mime }),
@@ -641,9 +650,11 @@ hostedDownloads.then((dl) => {
 
 function renderHostedHint(res) {
   const hosted = !!state.downloads;
-  show(el.hostedHint, hosted);
+  const saved = hostedFileName(res.name);
+  // a PDF keeps its name, so there is nothing to rename
+  show(el.hostedHint, hosted && saved !== res.name);
   if (hosted) {
-    el.hostedHint.textContent = t("result.hosted.hint", { name: res.name, saved: hostedFileName(res.name) });
+    el.hostedHint.textContent = t("result.hosted.hint", { name: res.name, saved: saved });
     show(el.share, false);
   }
 }
@@ -728,6 +739,7 @@ applyLanguage(initialLang());
 el.lang.value = currentLang();
 setEngineStatus();
 renderSupported();
+populateTargets(null);
 updateDirection();
 updateConvertButton();
 loadVersion();

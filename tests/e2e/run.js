@@ -11,7 +11,8 @@
 //          [--browser PATH]           Chromium executable (default: $PW_CHROMIUM, /opt/pw-browsers/chromium
 //                                     when it exists, else Playwright's own Chromium)
 //          [--timeout MS]             overall conversion timeout (default: 300000)
-//          [--to FORMAT] [--paper plain|pdf] [--no-pressure] [--simplify N]
+//          [--to FORMAT] [--paper plain|pdf] [--no-pressure] [--simplify N]   (Notability options)
+//          [--pdf-ink flatten|annotations]                                  (PDF option)
 //          [--lang sk|en|uk]          switch the page to this language first
 //          [--verbose]                echo browser console messages
 //
@@ -42,6 +43,7 @@ function parseArgs(argv) {
     to: null,
     pressure: true,
     simplify: null,
+    pdfInk: null,
     lang: null,
     verbose: false,
   };
@@ -62,6 +64,7 @@ function parseArgs(argv) {
       case "--to": args.to = next(); break;
       case "--no-pressure": args.pressure = false; break;
       case "--simplify": args.simplify = next(); break;
+      case "--pdf-ink": args.pdfInk = next(); break;
       case "--lang": args.lang = next(); break;
       case "--verbose": args.verbose = true; break;
       case "-h": case "--help":
@@ -191,6 +194,7 @@ async function main() {
     if (args.paper) await page.check('input[name="paper"][value="' + args.paper + '"]');
     if (!args.pressure) await page.uncheck("#pressure");
     if (args.simplify !== null) await page.fill("#simplify", String(args.simplify));
+    if (args.pdfInk) await page.check('input[name="pdf_ink"][value="' + args.pdfInk + '"]');
     await page.waitForSelector("#convert:not([disabled])", { timeout: 30000 });
 
     const downloadPromise = page.waitForEvent("download", { timeout: args.timeout });
