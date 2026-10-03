@@ -92,6 +92,10 @@ jobs:
           npm install -g --no-audit --no-fund playwright
           npx playwright install --with-deps chromium
 
+      # tests/conftest.py (pinned clone helper) imports pytest at module level
+      - name: Install gnnote and pytest
+        run: python -m pip install -e ".[test]"
+
       - name: Fetch sample files (synthetic fallback when the repositories are unreachable)
         run: |
           mkdir -p tests/.samples
