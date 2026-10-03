@@ -37,6 +37,7 @@ const el = {
   result: $("result"),
   resultName: $("result-name"),
   download: $("download"),
+  hostedHint: $("hosted-hint"),
   share: $("share"),
   stats: $("stats").querySelector("tbody"),
   warnings: $("warnings"),
@@ -544,6 +545,7 @@ function renderResult(res) {
     canShare = false;
   }
   show(el.share, canShare);
+  renderHostedHint(res);
   el.convert.textContent = t("convert.again");
 }
 
@@ -554,6 +556,47 @@ el.share.addEventListener("click", async () => {
   } catch (e) {
     if (e && e.name === "AbortError") return; // user dismissed the sheet
     showError(t("result.share.failed", { error: e && e.message ? e.message : String(e) }));
+  }
+});
+
+// Hosted viewers (the page published as a claude.ai artifact) block ordinary downloads and
+// offer a "downloads" capability instead; its file names must carry an allow-listed extension,
+// so the output is saved with a ".zip" suffix and the hint tells the user to rename it.
+// Outside such a host window.claude is absent and the plain download link is used.
+const HOSTED_OK_EXTENSIONS = ["zip", "pdf", "png", "jpg", "jpeg", "json", "txt", "md", "html", "svg", "csv"];
+
+function hostedFileName(name) {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  return HOSTED_OK_EXTENSIONS.includes(ext) ? name : name + ".zip";
+}
+
+const hostedDownloads = (window.claude && typeof window.claude.use === "function")
+  ? Promise.resolve().then(() => window.claude.use("downloads")).catch(() => null)
+  : Promise.resolve(null);
+
+hostedDownloads.then((dl) => {
+  state.downloads = dl || null;
+  if (state.downloads && state.last) renderHostedHint(state.last);
+});
+
+function renderHostedHint(res) {
+  const hosted = !!state.downloads;
+  show(el.hostedHint, hosted);
+  if (hosted) {
+    el.hostedHint.textContent = t("result.hosted.hint", { name: res.name, saved: hostedFileName(res.name) });
+    show(el.share, false);
+  }
+}
+
+el.download.addEventListener("click", async (event) => {
+  if (!state.downloads || !state.last) return; // plain link: the browser downloads the Blob URL
+  event.preventDefault();
+  try {
+    await state.downloads.save({ filename: hostedFileName(state.last.name), data: state.last.blob });
+  } catch (e) {
+    const code = e && e.code ? String(e.code) : "";
+    if (code === "declined" || code === "rate_limited") return;
+    showError(t("result.hosted.failed", { error: e && e.message ? e.message : String(e) }));
   }
 });
 

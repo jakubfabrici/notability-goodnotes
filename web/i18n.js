@@ -59,6 +59,8 @@ export const STRINGS = {
     "result.share.failed": "Zdieľanie sa nepodarilo: {error}",
     "result.open.hint": "Na iPade otvorte stiahnutý súbor v aplikácii Súbory a zdieľajte ho do Notability alebo GoodNotes.",
     "result.warnings.lang": "Upozornenia prevodníka sú v angličtine.",
+    "result.hosted.hint": "Táto stránka beží v chránenom prostredí, preto sa súbor uloží ako {saved}. V aplikácii Súbory ho premenujte na {name} a otvorte ho v cieľovej aplikácii (GoodNotes otvorí aj súbor .goodnotes.zip priamo).",
+    "result.hosted.failed": "Uloženie sa nepodarilo: {error}",
 
     "stats.pages": "Strany",
     "stats.strokes": "Ťahy",
@@ -133,6 +135,8 @@ export const STRINGS = {
     "result.share.failed": "Sharing failed: {error}",
     "result.open.hint": "On iPad, open the downloaded file in Files and share it to Notability or GoodNotes.",
     "result.warnings.lang": "",
+    "result.hosted.hint": "This page runs in a sandboxed host, so the file is saved as {saved}. Rename it to {name} in the Files app and open it in the target app (GoodNotes opens .goodnotes.zip directly).",
+    "result.hosted.failed": "Saving failed: {error}",
 
     "stats.pages": "Pages",
     "stats.strokes": "Strokes",
