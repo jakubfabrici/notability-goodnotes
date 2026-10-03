@@ -98,6 +98,8 @@ MAX_POINTS_PER_PAGE = 2_000_000
 DEFAULT_TEXT_SIZE = 14.0  # canvas units, for a text box whose font carries no size (the sample's size)
 MAX_CANVAS = 1_000_000.0  # a note size beyond this many units is damage
 MAX_WIDTH = 1_000_000.0  # a stroke width beyond this many units is damage
+MAX_COORD = 1_000_000.0  # an ink point further off the page than this many units is damage
+MAX_PDF_SIDE = 1_000_000.0  # a PDF page side beyond this many pt (14 km) is damage
 _PAGE_NAME_RE = re.compile(r"^(\d{1,9})\.cpage$", re.IGNORECASE)
 _PDF_NAME_RE = re.compile(r"^(\d{1,9})\.pdf$", re.IGNORECASE)
 _AUDIO_EXTENSIONS = (".m4a", ".caf", ".aac", ".wav", ".mp3", ".aiff")
@@ -550,6 +552,7 @@ def _attributed_text(data: bytes) -> Optional[Tuple[str, List[TextRun]]]:
 class _PageInfo:
     page: Page
     scale: Optional[float]  # pt per canvas unit of a PDF-backed page; None for a blank page
+    final: bool = False  # already in pt (a blank page of a note without PDFs)
 
 
 @dataclass
@@ -565,6 +568,7 @@ class _Counts:
     skipped_images: int = 0
     unknown_attachments: Dict[str, int] = field(default_factory=dict)
     ratio_pages: List[int] = field(default_factory=list)
+    dropped_points: int = 0  # NaN, infinite or absurdly far ink points
 
 
 def _pages_list(numbers: Sequence[int]) -> str:
@@ -579,6 +583,11 @@ class _Reader:
         self.counts = _Counts()
         self._pdf_info: Dict[int, Optional[List[Tuple[float, float]]]] = {}
         self._pdf_bytes: Dict[int, bytes] = {}
+        inline = self.source.note.get("importedPdfDatas")
+        # Without any PDF the scale of blank pages is known up front; otherwise it depends on
+        # their neighbours, so they are built in canvas units and scaled at the end.
+        self.blank_scale: Optional[float] = (
+            None if self.source.pdfs or (isinstance(inline, list) and inline) else A4_PT_PER_UNIT)
 
     def warn(self, message: str) -> None:
         self.doc.warn(message)
@@ -610,8 +619,9 @@ class _Reader:
             return
         fmt = _index(manifest.get("format"))
         min_reader = _index(manifest.get("minReader"))
-        if (fmt is not None and fmt > KNOWN_FORMAT) or (min_reader is not None and min_reader > KNOWN_FORMAT):
-            self.warn(f"The note was saved in CollaNote package format {fmt}, newer than the format "
+        newest = max(v for v in (fmt, min_reader, 0) if v is not None)
+        if newest > KNOWN_FORMAT:
+            self.warn(f"The note was saved in CollaNote package format {newest}, newer than the format "
                       f"{KNOWN_FORMAT} this reader knows; some content may be missing")
         declared = _index(manifest.get("pageCount"))
         if declared is not None and declared != pages_found:
@@ -647,7 +657,10 @@ class _Reader:
         sizes: Optional[List[Tuple[float, float]]] = None
         data = self.pdf_data(index)
         if data is None:
-            self.warn(f"PDF {index}.pdf is missing from the note; the pages showing it were read as blank pages")
+            inline = self.source.note.get("importedPdfDatas")
+            present = index in self.source.pdfs or (isinstance(inline, list) and index < len(inline))
+            what = "could not be read" if present else "is missing from the note"
+            self.warn(f"PDF {index}.pdf {what}; the pages showing it were read as blank pages")
         else:
             try:
                 from ..pdfutil import pdf_info
@@ -705,7 +718,9 @@ class _Reader:
                 info = self.page(number, data, width, height, paper)
             except Exception as exc:  # noqa: BLE001 - one damaged page must not lose the note
                 self.warn(f"Page {number} could not be read ({exc.__class__.__name__}) and was replaced by a blank page")
-                info = _PageInfo(Page(width=width, height=height, paper=paper), None)
+                s = self.blank_scale or 1.0
+                info = _PageInfo(Page(width=width * s, height=height * s, paper=paper), None,
+                                 final=self.blank_scale is not None)
             infos.append(info)
         self.finish_blank_pages(infos)
         doc.pages = [info.page for info in infos]
@@ -733,13 +748,13 @@ class _Reader:
                 page = Page(width=pw, height=ph, background=PdfBackground(str(pdf_index), page_index))
                 if abs(ph / pw - height / width) > 0.01 * (height / width):
                     self.counts.ratio_pages.append(number)
-        if page is None:
-            page = Page(width=width, height=height, paper=paper)  # canvas units; scaled in finish_blank_pages
-        s = scale if scale is not None else 1.0
+        s = scale if scale is not None else (self.blank_scale or 1.0)
+        if page is None:  # in pt when the scale is known now, else in canvas units (finish_blank_pages)
+            page = Page(width=width * s, height=height * s, paper=paper)
         self.legacy_ink(number, data, page, s, height)
         self.ink(number, data, page, s)
         self.attachments(number, data, page, s, width, height)
-        return _PageInfo(page, scale)
+        return _PageInfo(page, scale, final=scale is None and self.blank_scale is not None)
 
     def pdf_page(self, number: int, pointer: Any) -> Optional[Tuple[int, int, float, float]]:
         if not isinstance(pointer, dict):
@@ -758,7 +773,8 @@ class _Reader:
                       f"{len(sizes)} pages; it was read as a blank page")
             return None
         pw, ph = sizes[page_index]
-        if not (pw > 0 and ph > 0):
+        if not (0 < pw <= MAX_PDF_SIDE and 0 < ph <= MAX_PDF_SIDE):
+            self.warn(f"Page {number} shows a page of {pdf_index}.pdf whose size is unusable; it was read as a blank page")
             return None
         return pdf_index, page_index, pw, ph
 
@@ -766,7 +782,7 @@ class _Reader:
         """Scale blank pages (built in canvas units) like their nearest PDF-backed neighbour."""
         scales = [info.scale for info in infos]
         for i, info in enumerate(infos):
-            if info.scale is not None:
+            if info.scale is not None or info.final:
                 continue
             before = next((scales[j] for j in range(i - 1, -1, -1) if scales[j] is not None), None)
             after = next((scales[j] for j in range(i + 1, len(scales)) if scales[j] is not None), None)
@@ -828,8 +844,9 @@ class _Reader:
             width = float(statistics.median(positive)) if positive else 1.0
         points: List[Point] = []
         for x, y, w in raw_points:
-            if x - x == 0.0 and y - y == 0.0:  # finite
+            if -MAX_COORD <= x <= MAX_COORD and -MAX_COORD <= y <= MAX_COORD:  # False for NaN too
                 points.append(Point(x * s, y * s, (w if 0.0 < w < MAX_WIDTH else width) * s))
+        self.counts.dropped_points += len(raw_points) - len(points)
         if not points:
             return None
         if ink_type == INK_HIGHLIGHTER:
@@ -867,7 +884,9 @@ class _Reader:
             if ys and max(ys) > 1.25 * height and min(ys) >= offset - 0.25 * height:
                 dy = -offset
                 self.counts.legacy_shifted += 1
-        strokes = pencilkit.to_model_strokes(drawing.strokes, scale=s, dy=dy)
+        strokes = pencilkit.to_model_strokes(drawing.strokes, scale=s, dy=dy, max_abs=MAX_COORD)
+        self.counts.dropped_points += (sum(len(st.points) for st in drawing.strokes)
+                                       - sum(len(st.points) for st in strokes))
         if strokes:
             page.strokes.extend(strokes)
             self.counts.legacy_pages.append(number)
@@ -984,6 +1003,9 @@ class _Reader:
                       "they were read as plain pen strokes")
         if c.damaged_strokes:
             self.warn(f"{c.damaged_strokes} damaged stroke(s) were skipped")
+        if c.dropped_points:
+            self.warn(f"{c.dropped_points} ink point(s) with unusable coordinates (not a number, or far off "
+                      "the page) were dropped")
         if c.damaged_layers:
             self.warn(f"The ink data of page(s) {_pages_list(sorted(set(c.damaged_layers)))} is damaged; "
                       "what could be read was kept")

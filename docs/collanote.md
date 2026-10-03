@@ -39,7 +39,9 @@ the top level or under one folder (`note without pdf.cnote`, `basenote.cdat`, `m
 `N.cpage`), a ZIP with a single `.cnote` member, or a JSON object with CollaNote keys, whatever the
 file is called: a zipped package named `X.cnote.zip` converts to `X.note` / `X.goodnotes`.
 `__MACOSX/`, `._*` and `.DS_Store` members are ignored. An archive with several notes yields the
-top-level one (else the folder with the most pages) and a warning.
+top-level one (else the folder with the most pages) and a warning. The CLI also takes a package
+folder as it lies on disk (`gnnote convert "Week 1.cnote"`, also in `info` and `batch`): it
+zips the folder in memory first.
 
 ## 2. Note JSON (`note without pdf.cnote` / `basenote.cdat`)
 
@@ -206,8 +208,10 @@ below.
   (pages reach 3.8 MB each, notes 100 MB).
 * A base64 payload (ink layer, image, embedded PDF) may decode to at most 64 MB; a page holds at
   most 200,000 strokes and 2,000,000 points; at most 10,000 pages are read.
-* JSON that is not an object, deeply nested JSON, non-numeric sizes and indices, NaN or infinite
-  coordinates (dropped point by point), widths and sizes out of range all degrade to warnings.
+* JSON that is not an object, deeply nested JSON, non-numeric sizes and indices, widths and sizes
+  out of range all degrade to warnings. Ink points that are not a number, infinite or more than
+  1,000,000 canvas units off the page are dropped (one counted warning; legacy PencilKit points
+  too), and a PDF page side above 1,000,000 pt makes the page blank.
 * A page that cannot be read becomes a blank page with a warning; only data that is not a CollaNote
   note at all raises `ValueError`, and nothing else escapes `read_cnote`.
 

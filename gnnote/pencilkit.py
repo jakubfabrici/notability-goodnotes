@@ -365,6 +365,15 @@ def parse_pkdrawing(data: bytes) -> PKDrawing:
     if not is_pkdrawing(data):
         raise ValueError("not a PKDrawing (missing the 'wrd\\xf0' header)")
     try:
+        return _parse(data)
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the contract: nothing but ValueError escapes (MemoryError too)
+        raise ValueError(f"unreadable PKDrawing ({exc.__class__.__name__})") from None
+
+
+def _parse(data: bytes) -> PKDrawing:
+    try:
         version = struct.unpack_from("<H", data, 4)[0]
         top = protobuf.decode_message(data[6:], max_fields=MAX_STROKES + MAX_INKS + _MAX_SUBFIELDS)
     except (ValueError, struct.error) as exc:
@@ -418,18 +427,22 @@ def ink_kind(identifier: str) -> Tuple[str, Optional[str], bool]:
     return found[0], found[1], True
 
 
-def to_model_stroke(stroke: PKStroke, scale: float = 1.0, dx: float = 0.0, dy: float = 0.0) -> Optional[Stroke]:
+def to_model_stroke(stroke: PKStroke, scale: float = 1.0, dx: float = 0.0, dy: float = 0.0,
+                    max_abs: Optional[float] = None) -> Optional[Stroke]:
     """``stroke`` as a :class:`gnnote.model.Stroke` polyline.
 
     Point ``(x, y)`` becomes ``((x + dx) * scale, (y + dy) * scale)``; widths are scaled too.
     The stored points (the control points PencilKit draws its curve through) become the
     polyline.  A per-point opacity below 1 (pencil) lowers the stroke's alpha by its median.
-    Non-finite points are dropped; ``None`` when no point is left.
+    Non-finite points are dropped, and so are points whose ``|x + dx|`` or ``|y + dy|`` exceeds
+    ``max_abs`` when given; ``None`` when no point is left.
     """
     pts: List[Point] = []
     widths: List[float] = []
     opacities: List[float] = []
     for p in stroke.points:
+        if max_abs is not None and not (abs(p.x + dx) <= max_abs and abs(p.y + dy) <= max_abs):
+            continue
         x = (p.x + dx) * scale
         y = (p.y + dy) * scale
         if not (math.isfinite(x) and math.isfinite(y)):
@@ -454,11 +467,11 @@ def to_model_stroke(stroke: PKStroke, scale: float = 1.0, dx: float = 0.0, dy: f
 
 
 def to_model_strokes(strokes: Sequence[PKStroke], scale: float = 1.0, dx: float = 0.0,
-                     dy: float = 0.0) -> List[Stroke]:
-    """:func:`to_model_stroke` over ``strokes``, dropping the ones without a finite point."""
+                     dy: float = 0.0, max_abs: Optional[float] = None) -> List[Stroke]:
+    """:func:`to_model_stroke` over ``strokes``, dropping the ones without a usable point."""
     out: List[Stroke] = []
     for s in strokes:
-        converted = to_model_stroke(s, scale, dx, dy)
+        converted = to_model_stroke(s, scale, dx, dy, max_abs)
         if converted is not None:
             out.append(converted)
     return out

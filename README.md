@@ -91,7 +91,8 @@ deployment.
 python3 -m gnnote convert Notebook.goodnotes                  # writes Notebook.note next to it
 python3 -m gnnote convert Note.note -o out/ --title "Maths"   # writes out/Note.goodnotes
 python3 -m gnnote convert Notebook.goodnotes --paper pdf --no-pressure --simplify 0.3
-python3 -m gnnote convert Lecture.cnote --to goodnotes          # CollaNote -> GoodNotes (default: Notability)
+python3 -m gnnote convert Lecture.cnote --to goodnotes          # CollaNote -> GoodNotes (default: Notability);
+                                                              # a .cnote package folder works too
 python3 -m gnnote formats                                     # the supported apps, read / write
 python3 -m gnnote info Note.note [--json]                     # format, title, pages, counts, warnings
 python3 -m gnnote batch ~/Notes -o ~/Converted --to notability

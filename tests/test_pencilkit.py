@@ -136,6 +136,15 @@ def test_point_and_stroke_limits(monkeypatch: pytest.MonkeyPatch) -> None:
         pencilkit.parse_pkdrawing(blob)
 
 
+def test_unexpected_errors_become_value_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(data: bytes) -> None:
+        raise MemoryError
+
+    monkeypatch.setattr(pencilkit, "_parse", boom)
+    with pytest.raises(ValueError, match="unreadable PKDrawing"):
+        pencilkit.parse_pkdrawing(EMPTY_PKDRAWING)
+
+
 def test_fuzzed_drawings_raise_nothing_but_value_error() -> None:
     rng = random.Random(1234)
     base = pk_blob([pk_ink(), pk_ink("com.apple.ink.marker", (1, 1, 0, 1))],
@@ -188,6 +197,11 @@ def test_to_model_stroke_drops_non_finite_points() -> None:
     assert stroke.points[0].width > 0  # a zero width falls back to a nominal one
     only_bad = pencilkit.PKStroke("com.apple.ink.pen", (0, 0, 0, 1), [pencilkit.PKPoint(float("nan"), 0.0)])
     assert pencilkit.to_model_stroke(only_bad) is None
+    far = pencilkit.PKStroke("com.apple.ink.pen", (0, 0, 0, 1),
+                             [pencilkit.PKPoint(5.0, 3000.0), pencilkit.PKPoint(5.0, 3e30)])
+    bounded = pencilkit.to_model_stroke(far, dy=-2000.0, max_abs=1e6)
+    assert bounded is not None and [(p.x, p.y) for p in bounded.points] == [(5.0, 1000.0)]
+    assert pencilkit.to_model_strokes([far], max_abs=100.0) == []  # the bound applies after the offset
 
 
 # --------------------------------------------------------------------------- Apple's fixtures (inkterop, CC0)

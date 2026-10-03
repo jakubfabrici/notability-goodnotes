@@ -413,6 +413,27 @@ def test_cli_lists_converts_and_describes_collanote(tmp_path: Path, capsys: pyte
     assert (tmp_path / "out" / "Lecture.goodnotes").is_file()
 
 
+def test_cli_takes_a_package_directory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """On a Mac a format-2 note is a folder ``X.cnote``; the CLI zips it in memory."""
+    stroke = dk_stroke([(100, 100, 2.0), (400, 300, 2.0)])
+    package = zipfile.ZipFile(io.BytesIO(cnote_package(note_json(name="Week 1"), [cpage([stroke]), cpage()],
+                                                       folder="Week 1.cnote")))
+    package.extractall(tmp_path / "library")
+    folder = tmp_path / "library" / "Week 1.cnote"
+    assert folder.is_dir()
+    assert main(["convert", str(folder), "--to", "goodnotes"]) == 0
+    assert (tmp_path / "library" / "Week 1.goodnotes").is_file()
+    capsys.readouterr()
+    assert main(["info", str(folder), "--json"]) == 0
+    info = json.loads(capsys.readouterr().out)
+    assert info["format"] == "collanote" and info["title"] == "Week 1" and info["totals"]["strokes"] == 1
+    assert main(["batch", str(tmp_path / "library"), "-o", str(tmp_path / "out")]) == 0
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["Week 1.note"]
+    empty = tmp_path / "Empty.cnote"
+    empty.mkdir()
+    assert main(["convert", str(empty)]) == 1  # an empty folder is no note
+
+
 # --------------------------------------------------------------------------- hardening
 
 
@@ -448,6 +469,20 @@ def test_member_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     assert any("inflates to more than 0 MB in total" in w for w in doc.warnings)
 
 
+def test_a_pdf_skipped_by_a_limit_is_not_called_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    pdf = make_paper_pdf(960, 540) + b"%" + b"x" * 50_000 + b"\n"
+    data = cnote_format1(note_json(size=SLIDE_CANVAS), [cpage(pdf=(0, 0))], pdfs={0: pdf})
+    assert read_cnote(data).pages[0].background is not None
+    monkeypatch.setattr(cn, "MAX_MEMBER_BYTES", 20_000)
+    doc = read_cnote(data)
+    assert doc.pages[0].background is None and doc.pdfs == {}
+    assert any("0.pdf could not be read" in w for w in doc.warnings)
+    assert not any("missing" in w for w in doc.warnings)
+    manifest = {"format": 2, "minReader": 3, "pageCount": 1}
+    doc = read_cnote(cnote_package(note_json(), [cpage()], manifest=manifest))
+    assert any("package format 3" in w for w in doc.warnings)
+
+
 def test_payload_stroke_point_and_page_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     strokes = [dk_stroke([(i, i, 2), (i + 1, i + 1, 2), (i + 2, i, 2)]) for i in range(6)]
     pages = [cpage(strokes, attachments=[image_attachment(png_bytes(), (0.5, 0.5), (0.1, 0.1))])] + [cpage()] * 3
@@ -473,7 +508,8 @@ def test_payload_stroke_point_and_page_limits(monkeypatch: pytest.MonkeyPatch) -
 
 def test_hostile_values_degrade_to_warnings() -> None:
     nan = struct.unpack("<f", b"\x00\x00\xc0\x7f")[0]
-    strokes = [dk_stroke([(nan, 1.0, 2.0), (2.0, 3.0, float("inf")), (4.0, 5.0, 2.0)], width=float("nan")),
+    strokes = [dk_stroke([(nan, 1.0, 2.0), (2.0, 3.0, float("inf")), (4.0, 5.0, 2.0), (3e38, 1.0, 2.0)],
+                         width=float("nan")),
                dk_stroke([(nan, nan, 1.0)]),
                dk_stroke([], width=2.0)]
     pages = [cpage(strokes), "not a page", {"_dkDrawing": "", "attachments": {"a": 1}, "pdfPointer": {"pdfIndex": -1}},
@@ -488,6 +524,11 @@ def test_hostile_values_degrade_to_warnings() -> None:
     assert any("page size is missing or unusable" in w for w in doc.warnings)
     assert any("Page 2 is unreadable" in w for w in doc.warnings)
     assert any("unreadable PDF reference" in w for w in doc.warnings)
+    assert "3 ink point(s) with unusable coordinates (not a number, or far off the page) were dropped" in doc.warnings
+    huge = two_page_pdf([(2e6, 1e6), (960, 540)])
+    doc = read_cnote(cnote_format1(note_json(size=SLIDE_CANVAS), [cpage(pdf=(0, 0)), cpage(pdf=(0, 1))], pdfs={0: huge}))
+    assert doc.pages[0].background is None and doc.pages[1].background is not None
+    assert any("whose size is unusable" in w for w in doc.warnings)
 
 
 def test_fuzzed_notes_raise_nothing_but_value_error() -> None:
