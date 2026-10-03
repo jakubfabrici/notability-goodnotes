@@ -387,6 +387,21 @@ def test_image_crop_and_flip_placement() -> None:
 # --------------------------------------------------------------------------- pages
 
 
+def test_absurd_crops_and_data_sizes_stay_on_the_page() -> None:
+    picture = b"\x89PNG\r\n\x1a\n" + b"\x00" * 30
+    crop = ttv.encode([(1, LIST | F64, [0, 0, 1e-5, 0, 1e-5, 1e-5, 0, 1e-5]), (2, LIST | I32, [0, 1, 1, 1, 4])])
+    outline = (RECORD | STAMPED, ttv.encode([(2, F64, 1.0)]))
+    points = (RECORD | STAMPED, ttv.encode([(1, LIST | F64, [0.0, 0.0, 5.0, 5.0]), (2, LIST | I32, [0, 1])]))
+    objects = [obj("IMG", 1, [100, 100, 80, 40, 0], t0002=(SIZE | STAMPED, (1e12, 1e12)), t000a=(STRING, "PIC"),
+                   t000c=(RECORD | STAMPED, crop)),
+               obj("LINE", 20, [10, 10, 1e8, 1e8, 0], t0002=(SIZE | STAMPED, (1e-8, 1e-8)), t0007=outline, t000d=points)]
+    pages = [("P1", page_record("P1", "+E1", "ANN1"))]
+    doc = read_noteful(build(pages, {"PDF0": user_pdf(), "PIC": picture, "ANN1": annotation(b"", objects)}))
+    (image,) = doc.pages[0].images
+    assert (image.x * U, image.y * U, image.w * U, image.h * U) == pytest.approx((60, 80, 80, 40))
+    assert doc.pages[0].strokes == [] and any("unreadable outline" in w for w in doc.warnings)
+
+
 def test_pages_sort_by_tag_and_deleted_pages_are_skipped() -> None:
     pages = [("P3", page_record("P3", "+E00300")), ("P1", page_record("P1", "+E00100", page_index=0)),
              ("PX", page_record("PX", None)), ("P2", page_record("P2", "+E00200", page_index=1)),

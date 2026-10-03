@@ -287,10 +287,10 @@ def _point_path(rec: Optional[Record], sx: float, sy: float) -> Tuple[List[_Sub]
     if len(coords) > 2 * MAX_SHAPE_POINTS:
         return [], True
     for i in range(0, len(coords) - 1, 2):
-        x, y = coords[i], coords[i + 1]
+        x, y = coords[i] * sx, coords[i + 1] * sy
         if not _finite(x, y) or abs(x) > MAX_COORD or abs(y) > MAX_COORD:
             return [], True
-        pts.append((x * sx, y * sy))
+        pts.append((x, y))
     subs: List[_Sub] = []
     cur: Optional[_Sub] = None
     i = 0
@@ -1068,14 +1068,14 @@ class _Reader:
         if fmt is None:
             self.count("image_format")
             return []
+        if w <= 0 or h <= 0:
+            self.count("object_box")
+            return []
         if self.image_bytes + len(raw) > len(self.data) + MAX_SHARED_IMAGE_BYTES:
             self.count("image_shared")
             return []
         self.image_bytes += len(raw)
         self.used_files.add(file_id)
-        if w <= 0 or h <= 0:
-            self.count("object_box")
-            return []
         fw, fh, lx, ly = w, h, 0.0, 0.0  # the whole picture: size and centre relative to the box centre
         natural = data.size(0x0002)
         crop = data.record(0x000c)
@@ -1089,9 +1089,9 @@ class _Reader:
                 nw, nh = natural
                 if cw > 1e-6 and ch > 1e-6:
                     sx, sy = w / cw, h / ch
-                    fw, fh = nw * sx, nh * sy
-                    lx = -w / 2.0 - x0 * sx + fw / 2.0
-                    ly = -h / 2.0 - y0 * sy + fh / 2.0
+                    whole = (nw * sx, nh * sy, -w / 2.0 - x0 * sx + nw * sx / 2.0, -h / 2.0 - y0 * sy + nh * sy / 2.0)
+                    if all(math.isfinite(v) and abs(v) <= MAX_COORD for v in whole):
+                        fw, fh, lx, ly = whole  # else: an absurd crop, the picture stays in the box
                     eps = 1e-3 * max(nw, nh) + 1e-6
                     if x0 > eps or y0 > eps or x1 < nw - eps or y1 < nh - eps:
                         self.count("crop")

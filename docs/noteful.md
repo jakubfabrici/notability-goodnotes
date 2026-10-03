@@ -157,10 +157,16 @@ EXIF-rotated photos warn (whether Noteful applies the orientation on top is unve
 
 Hardening (`docs/design.md` §1): every offset, length and list count is checked against the
 bytes that remain; nesting is limited to 32 levels; one file yields at most 10 000 000 TTV
-values, 10 000 000 ink points (1 000 000 per stroke) and 10 000 pages; an unknown TTV type or
-ink record costs only the record it sits in (a page's objects or the rest of its ink); a
-missing page list rebuilds the pages from the annotation records. Only a missing magic, an
-unreadable root index or a file without any page information raise `ValueError`.
+values, 10 000 000 model points (ink, shape outlines and fills together; 1 000 000 per ink
+stroke, 100 000 per shape path, about 2 000 per flattened fill) and 10 000 pages;
+coordinates beyond 10^9 units are damage; a content record shared by several pages is decoded
+once, every embedded file is copied out once, and images may reference the same pictures for
+at most 256 MB beyond the file's own size. An unknown TTV type or ink record costs only the
+record it sits in (a page's objects or the rest of its ink); a missing page list rebuilds the
+pages from the annotation records. Only a missing magic, an unreadable root index or a file
+without any page information raise `ValueError`. The writer flattens a Bezier stroke into at
+most 20 000 points (a wider spacing for very long strokes) and writes at most 50 000 000 ink
+points per file; a stroke that cannot be encoded is skipped whole.
 
 ## 9. Not verified on a device
 
