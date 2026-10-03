@@ -67,6 +67,8 @@ __all__ = ["write_noteful", "FIXED_TIME", "order_tag", "font_family"]
 U = UNITS_PER_POINT
 FIXED_TIME = 1767225600.0  # 2026-01-01T00:00:00Z: the clock of reproducible output
 FLATTEN_SPACING = 1.0  # pt between the points of a flattened Bezier stroke
+MAX_STROKE_SAMPLES = 20_000  # a longer Bezier stroke is flattened with a proportionally wider spacing
+MAX_WRITTEN_POINTS = 50_000_000  # ink points per file; further strokes are skipped with a warning
 MAX_PAGE_SIDE_PT = 1e6
 MAX_COORD = 1e9  # units (about 7 km): beyond this a coordinate is damage; float32 spans stay finite
 SPAN_EPSILON = 9.999999747378752e-06  # float32(1e-5): the app's span of a zero-extent dimension
@@ -84,6 +86,7 @@ _TEXT_LIST = {1: "str", 2: "bool", 3: "bool", 4: "int", 6: "color", 8: "int", 9:
 
 _COUNTED = {
     "stroke_bad": "{n} strokes with coordinates that are not finite or too large were skipped",
+    "stroke_limit": "{n} strokes beyond the limit of 50 million ink points were skipped",
     "fill_bad": "{n} shape fills without a usable outline were skipped",
     "text_empty": "{n} empty text boxes were skipped",
     "text_bad": "{n} text boxes with an invalid position or size were skipped",
@@ -146,7 +149,7 @@ def _sniff(data: bytes) -> Optional[str]:
         return "png"
     if data[:3] == b"\xff\xd8\xff":
         return "jpeg"
-    if data.lstrip()[:5] == b"%PDF-":
+    if data[:64].lstrip()[:5] == b"%PDF-":
         return "pdf"
     return None
 
@@ -203,9 +206,11 @@ class _Writer:
         self.pdf_files: Dict[str, str] = {}  # model pdf_id -> file UUID
         self.paper_files: Dict[Tuple[float, float, str], str] = {}
         self.image_files: Dict[str, str] = {}  # sha1 of the picture -> file UUID
+        self.image_digests: Dict[int, str] = {}  # id(picture bytes) -> sha1: a shared picture is hashed once
         self.pdf_infos: Dict[str, Optional[pdfutil.PdfInfo]] = {}
         self.annotations: List[Tuple[str, bytes]] = []
         self.counts: Dict[str, int] = {}
+        self.points = 0  # ink points written so far (MAX_WRITTEN_POINTS)
 
     # -- bookkeeping ------------------------------------------------------------------------
 
@@ -311,7 +316,9 @@ class _Writer:
             return None
         if fmt == "jpeg" and (jpeg_exif_orientation(data) or 1) != 1:
             self.count("image_exif")
-        key = hashlib.sha1(data).hexdigest()
+        key = self.image_digests.get(id(image.data))
+        if key is None:
+            key = self.image_digests[id(image.data)] = hashlib.sha1(data).hexdigest()
         name = self.image_files.get(key)
         if name is None:
             name = self.image_files[key] = self.add_file(data)
@@ -474,7 +481,16 @@ class _Writer:
         if not points:
             return None
         if stroke.controls is not None and len(points) >= 2 and len(stroke.controls) == len(points) - 1:
-            points = flatten_bezier(points, stroke.controls, FLATTEN_SPACING)
+            length = sum(math.hypot(c1.x - p0.x, c1.y - p0.y) + math.hypot(c2.x - c1.x, c2.y - c1.y)
+                         + math.hypot(p1.x - c2.x, p1.y - c2.y)
+                         for p0, (c1, c2), p1 in zip(points, stroke.controls, points[1:]))
+            if not math.isfinite(length):
+                self.count("stroke_bad")
+                return None
+            points = flatten_bezier(points, stroke.controls, max(FLATTEN_SPACING, length / MAX_STROKE_SAMPLES))
+        if self.points + len(points) > MAX_WRITTEN_POINTS:
+            self.count("stroke_limit")
+            return None
         coords: List[Tuple[float, float, float]] = []
         for p in points:
             x, y = float(p.x) * U, float(p.y) * U
@@ -486,6 +502,7 @@ class _Writer:
             coords.append((x, y, r))
         if len(coords) == 1:
             coords.append(coords[0])  # a dot is two identical points, as the app writes it
+        self.points += len(coords)
         radii = [c[2] for c in coords]
         variable = max(radii) - min(radii) > 1e-6 * max(1.0, max(radii))
         nominal_pt = float(stroke.width) if stroke.width and math.isfinite(stroke.width) and stroke.width > 0 else 0.0

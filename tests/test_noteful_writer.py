@@ -368,6 +368,23 @@ def test_convert_api_writes_noteful(samples) -> None:
     assert io.BytesIO(result.data).read(4) == b"\xaa\xbb\xcc\xde"
 
 
+def test_flattening_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gnnote.noteful import writer as nf_writer
+
+    huge = Stroke([Point(0, 0, 1), Point(1e6, 0, 1)], controls=[(Point(0, 1e6, 1), Point(1e6, 1e6, 1))])
+    small = Stroke([Point(10, 10, 1), Point(30, 10, 1)], controls=[(Point(10, 20, 1), Point(30, 20, 1))])
+    doc = Document(pages=[Page(300, 400, strokes=[huge, small])])
+    back = read_noteful(write_noteful(doc, Seeded()))
+    big, little = back.pages[0].strokes
+    assert len(big.points) <= nf_writer.MAX_STROKE_SAMPLES + 2
+    assert len(little.points) == len(flatten_bezier(small.points, small.controls, 1.0))  # 1 pt spacing kept
+    monkeypatch.setattr(nf_writer, "MAX_WRITTEN_POINTS", 50)
+    doc = Document(pages=[Page(300, 400, strokes=[small, small, small, huge])])
+    back = read_noteful(write_noteful(doc, Seeded()))
+    assert len(back.pages[0].strokes) == 1
+    assert any("limit of 50 million ink points" in w for w in doc.warnings)
+
+
 def test_a_failing_stroke_leaves_the_ink_intact(monkeypatch: pytest.MonkeyPatch) -> None:
     from gnnote.noteful import writer as nf_writer
 

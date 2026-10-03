@@ -157,7 +157,7 @@ def simple_file(ink: bytes = b"", objects: Sequence[Tuple[str, bytes]] = (), **k
 def test_ttv_round_trips_every_type() -> None:
     nested = ttv.encode([(0, U64, 7)])
     data = ttv.encode([
-        (1, BOOL, True), (2, U64, 2 ** 63), (3, F32, 1.5), (4, ttv.DATE, 788732206.5), (5, STRING, "ä​"),
+        (1, BOOL, True), (2, U64, 2 ** 63), (3, F32, 1.5), (4, ttv.DATE, 788732206.5), (5, STRING, "ä\u200b"),
         (6, BYTES, b"\x00\xff"), (7, RECORD, nested), (8, U16, 65535), (9, U32, 2 ** 32 - 1), (10, ttv.U64_ALT, 5),
         (11, I32, -3), (12, F64, -0.25), (13, SIZE, (1.0, 2.0)), (14, LIST | STRING, ["a", "b"]),
         (15, LIST | F64, [1.0, 2.0]), (16, LIST | RECORD, [nested, nested]), (17, STRING | STAMPED, "s", 99),
@@ -166,7 +166,7 @@ def test_ttv_round_trips_every_type() -> None:
     rec = ttv.Decoder(data).decode(0, len(data))
     assert rec.error is None
     assert rec.boolean(1) is True and rec.integer(2) == 2 ** 63 and rec.number(3) == 1.5
-    assert rec.number(4) == 788732206.5 and rec.string(5) == "ä​" and rec.data(6) == b"\x00\xff"
+    assert rec.number(4) == 788732206.5 and rec.string(5) == "ä\u200b" and rec.data(6) == b"\x00\xff"
     assert rec.record(7).integer(0) == 7 and rec.integer(8) == 65535 and rec.integer(9) == 2 ** 32 - 1
     assert rec.integer(10) == 5 and rec.integer(11) == -3 and rec.number(12) == -0.25 and rec.size(13) == (1.0, 2.0)
     assert rec.strings(14) == ["a", "b"] and rec.numbers(15) == [1.0, 2.0]
@@ -194,7 +194,7 @@ def test_ttv_unknown_type_stops_only_its_own_record() -> None:
     (struct.pack(">HH", 1, U64) + b"\x00\x00", "cut off"),
     (struct.pack(">HH", 1, STRING | STAMPED) + struct.pack(">I", 0) + b"\x00", "timestamp cut off"),
     (b"\x00\x01\x00", "header cut off"),
-])
+], ids=["list-count", "string-list-count", "string-length", "u64-cut", "stamp-cut", "header-cut"])
 def test_ttv_counts_and_lengths_are_checked(payload: bytes, message: str) -> None:
     rec = ttv.Decoder(payload).decode(0, len(payload))
     assert message in (rec.error or "")
@@ -341,7 +341,7 @@ def test_shapes_become_strokes_and_fills() -> None:
 
 def test_text_box_runs_insets_and_rotation() -> None:
     rich = ttv.encode([
-        (1, U64, 0), (2, LIST | STRING, ["Hi ", "there", "​"]), (3, LIST | U64, [5, 3, 1]),
+        (1, U64, 0), (2, LIST | STRING, ["Hi ", "there", "\u200b"]), (3, LIST | U64, [5, 3, 1]),
         (4, LIST | I32, [10, 6, 8, 12, 9, 1, 10, 2, 10]), (5, LIST | STRING, ["Papyrus"]),
         (6, LIST | BOOL, [True]), (7, LIST | RECORD, [ttv.encode([(0, LIST | F32, [1.0, 0.0, 0.0, 1.0])])]),
         (8, LIST | U64, [1]), (9, LIST | RECORD, [ttv.encode([(1, LIST | RECORD, [])])]),
@@ -458,10 +458,51 @@ def test_missing_page_list_salvages_the_content_records() -> None:
     b"", b"\xaa\xbb\xcc\xde", b"PK\x03\x04" + b"\x00" * 40, b"\xaa\xbb\xcc\xde" + b"\x00" * 30,
     b"\xaa\xbb\xcc\xde" + b"\xaa\xbb\xcc\xde" + b"\x00" * 4 + struct.pack(">II", 4, 100),
     b"\xaa\xbb\xcc\xde" + b"\x00" * 8 + b"\xaa\xbb\xcc\xde" + b"\x00" * 4 + struct.pack(">II", 4, 8),
-])
+], ids=["empty", "magic-only", "zip", "no-trailer", "root-outside", "no-blob-index"])
 def test_not_a_noteful_file_is_a_value_error(data: bytes) -> None:
     with pytest.raises(ValueError):
         read_noteful(data)
+
+
+def test_shared_records_and_pictures_cannot_amplify_the_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gnnote.noteful import reader as nf_reader
+
+    ink = ink_style((0, 0, 0, 1)) + ink_stroke([(1, 1), (2, 2)]) + ink_stroke([(1e12, 1), (2, 2)])
+    picture = b"\xff\xd8\xff\xe0" + b"\x00" * 4000
+    objects = [obj(f"I{i}", 1, [50, 50, 20, 20, 0], z=i, t000a=(STRING, "PIC")) for i in range(6)]
+    pages = [(f"P{i}", page_record(f"P{i}", f"+E{i}", "ANN1")) for i in range(3)]
+    data = build(pages, {"PDF0": user_pdf(), "PIC": picture, "ANN1": annotation(ink, objects)})
+    monkeypatch.setattr(nf_reader, "MAX_SHARED_IMAGE_BYTES", 0)
+    doc = read_noteful(data)
+    # the content record is decoded once; the other pages that name it stay empty
+    assert [len(p.strokes) for p in doc.pages] == [1, 0, 0]
+    assert sum("shares its content record" in w for w in doc.warnings) == 2
+    assert any("1 strokes with non-finite or out-of-range" in w for w in doc.warnings)
+    # every image uses the same picture: beyond the file's own size they are skipped
+    images = doc.pages[0].images
+    assert 0 < len(images) < 6 and all(im.data is images[0].data for im in images)
+    assert any("reference the same pictures too often" in w for w in doc.warnings)
+    no_header = build(pages[:1], {"PDF0": user_pdf()}).replace(b"n:" + b"AB" * 16, b"x:" + b"AB" * 16)
+    assert any("header is missing" in w for w in read_noteful(no_header).warnings)
+
+
+def test_shapes_share_the_point_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gnnote.noteful import reader as nf_reader
+
+    fill = (RECORD | STAMPED, ttv.encode([(1, RECORD, ttv.encode([(0, LIST | F32, [1, 0, 0, 1])])), (2, BOOL, False)]))
+    outline = (RECORD | STAMPED, ttv.encode([(2, F64, 1.0)]))
+    huge = [obj(f"E{i}", 6, [5e8, 5e8, 1e9, 1e9, 0], z=i, t0005=fill, t0007=outline) for i in range(4)]
+    doc = read_noteful(simple_file(objects=huge))
+    fills = [s for s in doc.pages[0].strokes if s.kind == "fill"]
+    assert len(fills) == 4 and all(len(f.outline[0]) <= nf_reader.MAX_FILL_SAMPLES + 17 for f in fills)
+    monkeypatch.setattr(nf_reader, "MAX_INK_POINTS", 3000)
+    doc = read_noteful(simple_file(objects=huge))
+    assert 0 < len(doc.pages[0].strokes) < 8
+    assert any("beyond the point limit" in w for w in doc.warnings)
+    long = (RECORD | STAMPED, ttv.encode([(1, LIST | F64, [0.0] * (2 * nf_reader.MAX_SHAPE_POINTS + 2)),
+                                          (2, LIST | I32, [0, 1])]))
+    doc = read_noteful(simple_file(objects=[obj("P", 12, [1, 1, 1, 1, 0], t0007=outline, t000d=long)]))
+    assert doc.pages[0].strokes == [] and any("unreadable outline" in w for w in doc.warnings)
 
 
 def test_page_limit_and_values_outside_the_file(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -479,32 +520,43 @@ def test_page_limit_and_values_outside_the_file(monkeypatch: pytest.MonkeyPatch)
     assert doc.title == "Untitled" and any("outside the file" in w for w in doc.warnings)
 
 
-def test_truncation_and_random_damage_never_escape_as_other_errors() -> None:
+def _damage(data: bytes, seed: int, mutations: int, cuts: int) -> None:
+    """Truncate and mutate ``data``: reading may only ever end in a Document or ValueError."""
     import random
 
+    rng = random.Random(seed)
+    for cut in sorted({rng.randrange(len(data)) for _ in range(cuts)}):
+        try:
+            read_noteful(data[:cut])
+        except ValueError:
+            pass
+    for _ in range(mutations):
+        buf = bytearray(data)
+        for _ in range(rng.choice((1, 2, 6, 16))):
+            buf[rng.randrange(len(buf))] = rng.choice((0, 0xFF, 0x80, rng.randrange(256)))
+        try:
+            read_noteful(bytes(buf))
+        except ValueError:
+            pass
+
+
+def test_truncation_and_random_damage_never_escape_as_other_errors() -> None:
+    from gnnote.model import Document, Image, Page, Point, TextBox
     from gnnote.noteful.writer import write_noteful
 
     base = simple_file(ink_style((0, 0, 0, 1)) + ink_stroke([(i, i * 2, 1.0) for i in range(30)], variable=True))
-    for cut in range(0, len(base), 7):
-        try:
-            read_noteful(base[:cut])
-        except ValueError:
-            pass
-    from gnnote.model import Document, Image, Page, Point, TextBox
     page = Page(300, 400, strokes=[Stroke([Point(10 + i, 20 + i % 3, 1 + i % 2) for i in range(40)])],
                 texts=[TextBox(10, 10, 100, 20, "fuzz")],
                 images=[Image(5, 5, 20, 20, b"\x89PNG\r\n\x1a\n" + b"\x00" * 30)])
     written = write_noteful(Document(pages=[page]))
-    rng = random.Random(1234)
-    for data in (base, written):
-        for _ in range(300):
-            buf = bytearray(data)
-            for _ in range(rng.randint(1, 6)):
-                buf[rng.randrange(len(buf))] = rng.randrange(256)
-            try:
-                read_noteful(bytes(buf))
-            except ValueError:
-                pass
+    for seed, data in enumerate((base, written)):
+        _damage(data, seed, mutations=300, cuts=len(data) // 7)
+
+
+@pytest.mark.parametrize("name", NOTEFUL_SAMPLES)
+def test_damaged_samples_never_escape_as_other_errors(samples, name: str) -> None:
+    path = sample_files(samples)[NOTEFUL_SAMPLES.index(name)]
+    _damage(path.read_bytes(), seed=NOTEFUL_SAMPLES.index(name), mutations=80, cuts=40)
 
 
 # --------------------------------------------------------------------------- samples vs oracle
@@ -618,7 +670,7 @@ def test_sample_matches_the_oracle(oracle, sample_docs, name: str) -> None:
         assert len(page.texts) == len(texts)
         for box, o in zip(page.texts, texts):
             t = o["text"]
-            assert box.text == "".join(t["strings"]).replace("​", "")
+            assert box.text == "".join(t["strings"]).replace("\u200b", "")
             assert sum(r.size is not None for r in box.runs) == len(box.runs)
             assert (box.w * U + 10, box.h * U + 4) == pytest.approx(tuple(o["box"][2:4]))
         # images: one per image object, the picture the object names

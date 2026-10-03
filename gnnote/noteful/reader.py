@@ -72,13 +72,16 @@ from . import (
 from . import ttv
 from .ttv import Record
 
-__all__ = ["read_noteful", "decode_ink", "MAX_PAGES", "MAX_STROKE_POINTS", "MAX_INK_POINTS"]
+__all__ = ["read_noteful", "decode_ink", "MAX_PAGES", "MAX_STROKE_POINTS", "MAX_INK_POINTS", "MAX_SHAPE_POINTS"]
 
 K = POINTS_PER_UNIT
 MAX_PAGES = 10_000  # pages beyond this are dropped with a warning
 MAX_STROKE_POINTS = 1_000_000  # a stroke with more points is damage
-MAX_INK_POINTS = 10_000_000  # ink points per document; further strokes are skipped
-MAX_COORD = 1e9  # units; object boxes beyond this (about 7 km) are damage
+MAX_INK_POINTS = 10_000_000  # points per document (ink, shape outlines, fills); further ones are skipped
+MAX_SHAPE_POINTS = 100_000  # a shape outline with more points is damage
+MAX_FILL_SAMPLES = 2_000  # vertices of one flattened fill outline (large shapes get a coarser spacing)
+MAX_COORD = 1e9  # units; coordinates beyond this (about 7 km) are damage
+MAX_SHARED_IMAGE_BYTES = 256 * 1024 * 1024  # picture bytes images may reference beyond the file's own size
 ELLIPSE_ARCS = 16  # cubic arcs per ellipse (anchors every 22.5 degrees keep the bbox exact to 2 %)
 FILL_SPACING = 1.0  # pt between the vertices of a flattened fill outline
 HAIRLINE = 0.5  # pt; the width of a stroke whose stored width is zero
@@ -93,8 +96,8 @@ Cubic = Tuple[XY, XY, XY]  # (c1, c2, end)
 _COUNTED = {
     "dash": "{n} dashed or dotted strokes and shape outlines were drawn solid (the model has no dash patterns)",
     "blend": "{n} strokes with an unknown blend mode were read as pen strokes",
-    "stroke_bad": "{n} strokes with non-finite coordinates were skipped",
-    "stroke_limit": "{n} strokes beyond the ink point limit were skipped",
+    "stroke_bad": "{n} strokes with non-finite or out-of-range coordinates were skipped",
+    "stroke_limit": "{n} strokes and shapes beyond the point limit were skipped",
     "object_box": "{n} objects without a usable position or size were skipped",
     "shape_path": "{n} shapes with an unreadable outline were skipped or shortened",
     "text_bad": "{n} text boxes without readable text were skipped",
@@ -102,6 +105,7 @@ _COUNTED = {
     "text_background": "{n} text box background colours were dropped",
     "strike": "{n} text runs lost their strikethrough",
     "image_missing": "{n} images whose picture file is missing were skipped",
+    "image_shared": "{n} images were skipped: they reference the same pictures too often",
     "image_format": "{n} images that are neither PNG, JPEG nor PDF were skipped",
     "crop": "{n} cropped images were placed whole at the size and position they are shown at "
             "(the model has no crop, so the hidden parts show again)",
@@ -162,13 +166,19 @@ def _sniff_image(data: bytes) -> Optional[str]:
         return "png"
     if data[:3] == b"\xff\xd8\xff":
         return "jpeg"
-    if data.lstrip()[:5] == b"%PDF-":
+    if data[:64].lstrip()[:5] == b"%PDF-":
         return "pdf"
     return None
 
 
 def _finite(*values: float) -> bool:
     return all(isinstance(v, (int, float)) and math.isfinite(v) for v in values)
+
+
+def _in_range(values: Sequence[float]) -> bool:
+    """All finite and within +-MAX_COORD (NaN fails every comparison)."""
+    return bool(values) and -MAX_COORD <= min(values) and max(values) <= MAX_COORD \
+        and all(map(math.isfinite, values))
 
 
 def _template_paper(params: Optional[str]) -> str:
@@ -274,6 +284,8 @@ def _point_path(rec: Optional[Record], sx: float, sy: float) -> Tuple[List[_Sub]
     coords = rec.numbers(0x0001) or []
     cmds = rec.integers(0x0002) or []
     pts: List[XY] = []
+    if len(coords) > 2 * MAX_SHAPE_POINTS:
+        return [], True
     for i in range(0, len(coords) - 1, 2):
         x, y = coords[i], coords[i + 1]
         if not _finite(x, y) or abs(x) > MAX_COORD or abs(y) > MAX_COORD:
@@ -425,9 +437,14 @@ def _sub_stroke(sub: _Sub, frame: _Frame, width: float, color: RGBA) -> Stroke:
 
 
 def _sub_polygon(sub: _Sub, frame: _Frame) -> List[Point]:
+    """The subpath flattened (1 pt spacing; coarser for a large shape, so at most about
+    ``MAX_FILL_SAMPLES`` vertices plus one per segment)."""
     anchors = [frame.point(sub.start, 0.0)] + [frame.point(seg[2], 0.0) for seg in sub.segs]
     controls = [(frame.point(seg[0], 0.0), frame.point(seg[1], 0.0)) for seg in sub.segs]
-    return flatten_bezier(anchors, controls, FILL_SPACING)
+    length = sum(math.hypot(c1.x - p0.x, c1.y - p0.y) + math.hypot(c2.x - c1.x, c2.y - c1.y)
+                 + math.hypot(p1.x - c2.x, p1.y - c2.y)
+                 for p0, (c1, c2), p1 in zip(anchors, controls, anchors[1:]))
+    return flatten_bezier(anchors, controls, max(FILL_SPACING, length / MAX_FILL_SAMPLES))
 
 
 # --------------------------------------------------------------------------- ink
@@ -514,8 +531,8 @@ def decode_ink(blob: bytes, point_budget: int = MAX_INK_POINTS) -> InkResult:
             if dims == 3:
                 r0, fr = ranges[4], ranges[5] / 65535.0
                 rs = [r0 + v * fr for v in raw[2::dims]]
-        if not (_finite(nominal) and all(map(math.isfinite, xs)) and all(map(math.isfinite, ys))
-                and (rs is None or all(map(math.isfinite, rs)))):
+        if not (_finite(nominal) and abs(nominal) <= MAX_COORD and _in_range(xs) and _in_range(ys)
+                and (rs is None or _in_range(rs))):
             out.non_finite += 1
             continue
         out.points += count
@@ -593,7 +610,7 @@ def _rich_text(rec: Record, opacity: float) -> _RichText:
                     break
                 state[key] = value
         k += n
-        text = chunk.replace("​", "")
+        text = chunk.replace("\u200b", "")
         if not text:
             continue
         color = _rgba(state[6]) if isinstance(state[6], Record) else None
@@ -624,7 +641,10 @@ class _Reader:
         self.unknown_versions: Set[int] = set()
         self.pdf_infos: Dict[str, Optional[pdfutil.PdfInfo]] = {}
         self.used_files: Set[str] = set()
-        self.ink_points = 0
+        self.points = 0  # model points made so far (ink, shapes, fills), see MAX_INK_POINTS
+        self.image_bytes = 0  # picture bytes referenced by the images read so far
+        self.read_annotations: Set[str] = set()
+        self._blob_cache: Dict[str, bytes] = {}
 
     # -- bookkeeping ------------------------------------------------------------------------
 
@@ -648,11 +668,20 @@ class _Reader:
                       f"was checked against ({' / '.join(map(str, KNOWN_OBJECT_VERSIONS))}); read as those")
 
     def blob(self, name: Optional[str]) -> Optional[bytes]:
-        span = self.blobs.get(name) if name else None
-        if span is None:
+        """An embedded file's bytes (one shared copy per file, however often it is used)."""
+        if not name:
             return None
-        start, length = span
-        return self.data[start:start + length]
+        cached = self._blob_cache.get(name)
+        if cached is None:
+            span = self.blobs.get(name)
+            if span is None:
+                return None
+            cached = self._blob_cache[name] = self.data[span[0]:span[0] + span[1]]
+        return cached
+
+    def blob_head(self, name: str, n: int) -> Optional[bytes]:
+        span = self.blobs.get(name)
+        return None if span is None else self.data[span[0]:span[0] + min(n, span[1])]
 
     def record(self, name: Optional[str], what: str) -> Optional[Record]:
         """The blob ``name`` decoded as a record; damage becomes one warning naming ``what``."""
@@ -712,6 +741,7 @@ class _Reader:
                 self.used_files.add(thumb.string(0x0001) or "")
         else:
             doc.title = "Untitled"
+            self.warn("The notebook header is missing; the title is unknown")
         pages_rec = notebook.record(0x0002) if notebook is not None else None
         annotations = root.strings(0x0004) or []
         if pages_rec is None:
@@ -784,8 +814,8 @@ class _Reader:
         for name in dict.fromkeys(files):
             if name in self.used_files:
                 continue
-            data = self.blob(name)
-            if data is not None and _sniff_image(data[:16]) is None:
+            head = self.blob_head(name, 64)
+            if head is not None and _sniff_image(head) is None:
                 unsupported += 1
         if unsupported:
             self.warn(f"{unsupported} embedded files of an unsupported kind (e.g. audio recordings) were dropped")
@@ -864,6 +894,10 @@ class _Reader:
     # -- page content -----------------------------------------------------------------------
 
     def _annotation(self, page: Page, ann: str, label: str) -> None:
+        if ann in self.read_annotations:  # each page has its own record; never decode one twice
+            self.warn(f"{label} shares its content record with an earlier page; it was read without content")
+            return
+        self.read_annotations.add(ann)
         rec = self.record(ann, f"{label}: the content record")
         if rec is None:
             return
@@ -873,8 +907,8 @@ class _Reader:
         items: List[Tuple[int, int, str, Any]] = []  # (z key, order, kind, object)
         ink = rec.data(0x0002)
         if ink:
-            result = decode_ink(ink, MAX_INK_POINTS - self.ink_points)
-            self.ink_points += result.points
+            result = decode_ink(ink, MAX_INK_POINTS - self.points)
+            self.points += result.points
             if result.problem:
                 self.warn(f"{label}: {result.problem}; the rest of the page's ink was skipped")
             self.count("dash", result.dashed)
@@ -960,11 +994,22 @@ class _Reader:
                 self.count("shape_path")
             if not subs:
                 return []
+        # the point budget: anchors and handles of the outlines (+ an arrow head), then the fill
+        outline_cost = sum(3 * len(s.segs) + 1 for s in subs) + 16 if thickness > 0 else 0
+        if self.points + outline_cost > MAX_INK_POINTS:
+            self.count("stroke_limit")
+            return []
+        self.points += outline_cost
         frame = _Frame(cx, cy, w, h, theta)
         out: List[Tuple[str, Any]] = []
         if fill_color is not None:
             polygons = [_sub_polygon(s, frame) for s in subs if s.closed]
             polygons = [poly for poly in polygons if len(poly) >= 3]
+            fill_cost = sum(len(poly) for poly in polygons)
+            if self.points + fill_cost > MAX_INK_POINTS:
+                self.count("stroke_limit")
+                polygons = []
+            self.points += fill_cost if polygons else 0
             if polygons:
                 out.append(("stroke", Stroke(points=list(polygons[0]), color=_with_alpha(fill_color, opacity),
                                              kind="fill", pen=None, width=0.0, outline=polygons)))
@@ -1023,6 +1068,10 @@ class _Reader:
         if fmt is None:
             self.count("image_format")
             return []
+        if self.image_bytes + len(raw) > len(self.data) + MAX_SHARED_IMAGE_BYTES:
+            self.count("image_shared")
+            return []
+        self.image_bytes += len(raw)
         self.used_files.add(file_id)
         if w <= 0 or h <= 0:
             self.count("object_box")
