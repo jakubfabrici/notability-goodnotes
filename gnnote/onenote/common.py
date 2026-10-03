@@ -189,10 +189,6 @@ class Store:
         """The object space an ObjectSpaceID property refers to."""
         raise NotImplementedError
 
-    def file_identity(self) -> Optional[bytes]:  # pragma: no cover - interface
-        """``Header.guidFile`` of the revision store (what a ``.onetoc2`` uses to name it)."""
-        raise NotImplementedError
-
 
 # ----------------------------------------------------------------------------------
 # ObjectSpaceObjectPropSet / PropertySet ([MS-ONESTORE] 2.6.1 - 2.6.9)

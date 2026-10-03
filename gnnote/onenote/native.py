@@ -192,7 +192,6 @@ class NativeStore(Store):
         self.file_type = bytes(data[0:16])
         if self.file_type not in (FILE_TYPE_ONE, FILE_TYPE_ONETOC2):
             raise OneNoteError("not a OneNote section or table of contents (unknown file type GUID)")
-        self.guid_file = bytes(data[16:32])
         head = Buf(data, 0, HEADER_SIZE)
         head.pos = 96
         self.c_transactions = head.u32()
@@ -205,7 +204,6 @@ class NativeStore(Store):
             self.warn_once(f"The OneNote file is truncated ({len(data)} of {expected} bytes); "
                            "content in the missing part is lost")
         self._nodes_read = 0
-        self._warned: set = set()
         self._counts = self._committed_counts()
         self._spaces: Dict[ExtGuid, Optional[Tuple[int, int]]] = {}  # gosid -> manifest list ref
         self._space_cache: Dict[ExtGuid, Optional[NativeSpace]] = {}
@@ -219,9 +217,6 @@ class NativeStore(Store):
     def warn_once(self, message: str) -> None:
         if message not in self.warnings:
             self.warnings.append(message)
-
-    def file_identity(self) -> Optional[bytes]:
-        return self.guid_file
 
     def _ref(self, buf: Buf, stp_fmt: int, cb_fmt: int) -> Tuple[int, int]:
         """A FileNodeChunkReference in the formats the FileNode header announces (2.2.4.2)."""
@@ -289,53 +284,64 @@ class NativeStore(Store):
     # ------------------------------------------------------------------ file node lists (2.4)
 
     def _list_nodes(self, stp: int, cb: int) -> List[_Node]:
-        """Every committed FileNode of the file node list starting at ``stp``."""
+        """Every committed FileNode of the file node list starting at ``stp``.
+
+        A damaged fragment, a node that overruns it or a loop of fragments ends the list
+        with a warning; the nodes read before it are kept.  :class:`Damaged` when not even
+        the first fragment is readable.
+        """
         nodes: List[_Node] = []
         limit: Optional[int] = None
         list_id: Optional[int] = None
         seen = set()
         data = self.data
-        while True:
-            chunk = self._chunk(stp, cb)
-            if chunk is None:
-                break
-            if stp in seen or len(seen) >= MAX_FRAGMENTS:
-                raise Damaged("file node list fragments form a loop")
-            seen.add(stp)
-            if cb < 36:
-                raise Damaged("file node list fragment too small")
-            head = Buf(data, stp, stp + cb)
-            if head.u64() != LIST_MAGIC:
-                raise Damaged(f"no file node list at byte {stp}")
-            fragment_list = head.u32()
-            if list_id is None:
-                list_id = fragment_list
-                limit = self._counts.get(list_id)
-            elif fragment_list != list_id:
-                raise Damaged("file node list fragment belongs to another list")
-            pos = stp + 16
-            end = stp + cb - 20
-            while pos + 4 <= end:
-                if limit is not None and len(nodes) >= limit:
-                    return nodes
-                header = int.from_bytes(data[pos:pos + 4], "little")
-                fid = header & 0x3FF
-                size = (header >> 10) & 0x1FFF
-                if fid == CHUNK_TERMINATOR:
+        try:
+            while True:
+                chunk = self._chunk(stp, cb)
+                if chunk is None:
                     break
-                if size < 4 or pos + size > end:
-                    if header == 0:
-                        break  # zero padding before the next-fragment reference
-                    raise Damaged(f"FileNode at byte {pos} overruns its fragment")
-                self._nodes_read += 1
-                if self._nodes_read > MAX_NODES:
-                    raise Damaged("too many file nodes")
-                nodes.append(_Node(fid, (header >> 27) & 0xF, (header >> 23) & 3, (header >> 25) & 3, pos + 4, pos + size))
-                pos += size
-            if limit is not None and len(nodes) >= limit:
-                break
-            tail = Buf(data, stp + cb - 20, stp + cb)
-            stp, cb = tail.u64(), tail.u32()
+                if stp in seen or len(seen) >= MAX_FRAGMENTS:
+                    raise Damaged("file node list fragments form a loop")
+                seen.add(stp)
+                if cb < 36:
+                    raise Damaged("file node list fragment too small")
+                head = Buf(data, stp, stp + cb)
+                if head.u64() != LIST_MAGIC:
+                    raise Damaged(f"no file node list at byte {stp}")
+                fragment_list = head.u32()
+                if list_id is None:
+                    list_id = fragment_list
+                    limit = self._counts.get(list_id)
+                elif fragment_list != list_id:
+                    raise Damaged("file node list fragment belongs to another list")
+                pos = stp + 16
+                end = stp + cb - 20
+                while pos + 4 <= end:
+                    if limit is not None and len(nodes) >= limit:
+                        return nodes
+                    header = int.from_bytes(data[pos:pos + 4], "little")
+                    fid = header & 0x3FF
+                    size = (header >> 10) & 0x1FFF
+                    if fid == CHUNK_TERMINATOR:
+                        break
+                    if size < 4 or pos + size > end:
+                        if header == 0:
+                            break  # zero padding before the next-fragment reference
+                        raise Damaged(f"FileNode at byte {pos} overruns its fragment")
+                    self._nodes_read += 1
+                    if self._nodes_read > MAX_NODES:
+                        raise Damaged("too many file nodes")
+                    nodes.append(_Node(fid, (header >> 27) & 0xF, (header >> 23) & 3, (header >> 25) & 3, pos + 4,
+                                       pos + size))
+                    pos += size
+                if limit is not None and len(nodes) >= limit:
+                    break
+                tail = Buf(data, stp + cb - 20, stp + cb)
+                stp, cb = tail.u64(), tail.u32()
+        except Damaged:
+            if not nodes or self._nodes_read > MAX_NODES:
+                raise
+            self.warn_once("Part of the OneNote file is damaged; the content stored there is lost")
         return nodes
 
     # ------------------------------------------------------------------ root list, object spaces

@@ -43,7 +43,6 @@ DATA_ROOT: ExtGuid = (guid_bytes("{84DEFAB9-AAA3-4A0D-A3A8-520C77AC7073}"), 2)
 HEADER_ROOT: ExtGuid = (guid_bytes("{1A5A319C-C26B-41AA-B9C5-9BD8C44E07D4}"), 1)
 ROOT_ROLES = guid_bytes("{4A3717F8-1C14-49E7-9526-81D942DE1741}")  # n = revision store root role
 ROLE_ENCRYPTION_KEY = 3
-FILE_IDENTITY_GUID = 0x1C001D94
 
 # data element types (2.2.1.12.1)
 STORAGE_INDEX, STORAGE_MANIFEST, CELL_MANIFEST, REVISION_MANIFEST, OBJECT_GROUP, FRAGMENT, BLOB = 1, 2, 3, 4, 5, 6, 10
@@ -307,7 +306,6 @@ class PackageStore(Store):
             raise OneNoteError("not a OneNote file in the OneDrive packaging")
         self.data = data
         self.file_type = bytes(data[0:16])
-        self.guid_file = bytes(data[16:32])
         self._elements: Dict[ExtGuid, _Element] = {}
         self._cell_map: Dict[CellId, ExtGuid] = {}
         self._revision_map: Dict[ExtGuid, ExtGuid] = {}
@@ -443,15 +441,6 @@ class PackageStore(Store):
                 self.warn_once("Part of the OneNote storage index is damaged and was skipped")
         if not self._cell_map:
             raise OneNoteError("damaged OneNote file: no object spaces in the storage index")
-
-    def file_identity(self) -> Optional[bytes]:
-        cell = self._roots.get(HEADER_ROOT)
-        space = self._open(cell) if cell is not None else None
-        root = space.root(1) if space is not None else None
-        value = root.props.get(FILE_IDENTITY_GUID) if root is not None else None
-        if isinstance(value, bytes) and len(value) == 16:
-            return value
-        return self.guid_file
 
     def root_space(self) -> Optional[PackageSpace]:
         cell = self._roots.get(DATA_ROOT)

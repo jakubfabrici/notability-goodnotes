@@ -30,6 +30,13 @@ app opens as its own.
 GoodNotes notebooks written by GoodNotes 5 and 6 up to the 2026 builds (container schema 24,
 25 and 35) and Notability notes from version 4 to 16 are read.
 
+Dropped, with a warning in the output: audio recordings, stickers / sticky notes, stroke
+dash patterns (drawn solid), Notability vector shapes, math objects, image crops and flips.
+GoodNotes auto-shapes are converted silently: they become ordinary strokes drawn along the
+shape (straight sides stay straight; ellipses are sampled), only their translucent fill is
+dropped, with a warning.  Every other lossy step adds one human-readable warning, shown in
+the web page, printed by the CLI and returned in the `X-GnNote-Warnings` header of the server.
+
 ### OneNote (read only)
 
 | OneNote content | In GoodNotes / Notability |
@@ -48,18 +55,13 @@ formats. Refused with an explanation: password-protected sections, `.onepkg` pac
 folder from onedrive.live.com in Safari (select the folder, *Download*) and convert the
 `.zip`; see `docs/onenote.md` for the steps and the details.
 
-Dropped, with a warning in the output: audio recordings, stickers / sticky notes, stroke
-dash patterns (drawn solid), Notability vector shapes, math objects, image crops and flips.
-GoodNotes auto-shapes are converted silently: they become ordinary strokes drawn along the
-shape (straight sides stay straight; ellipses are sampled), only their translucent fill is
-dropped, with a warning.  Every other lossy step adds one human-readable warning, shown in
-the web page, printed by the CLI and returned in the `X-GnNote-Warnings` header of the server.
-
 ## Verification status
 
 GoodNotes -> Notability ink import confirmed on the author's iPad with a one-page test;
 everything else is validated against third-party parsers and sample files only, not on
-devices.
+devices. OneNote input is validated against 56 sample sections of both packagings and the
+one2html renderer; no notebook made on an iPad has been tested yet (`docs/onenote.md` lists
+the files that would close that gap).
 
 ## Quick start
 
