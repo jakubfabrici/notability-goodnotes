@@ -68,7 +68,7 @@ U = UNITS_PER_POINT
 FIXED_TIME = 1767225600.0  # 2026-01-01T00:00:00Z: the clock of reproducible output
 FLATTEN_SPACING = 1.0  # pt between the points of a flattened Bezier stroke
 MAX_PAGE_SIDE_PT = 1e6
-MAX_F32 = 3.0e38
+MAX_COORD = 1e9  # units (about 7 km): beyond this a coordinate is damage; float32 spans stay finite
 SPAN_EPSILON = 9.999999747378752e-06  # float32(1e-5): the app's span of a zero-extent dimension
 HAIRLINE = 0.5  # pt; the width of a stroke whose width is zero or unknown
 MIN_LINE_PITCH = 1.2  # font sizes per line a text box is at least given (the app's export: 1.24 .. 1.33)
@@ -466,10 +466,13 @@ class _Writer:
 
     # -- ink --------------------------------------------------------------------------------
 
-    def _ink(self, stroke: Stroke, out: bytearray, style: List[Any]) -> None:
+    def _ink(self, stroke: Stroke, style: Optional[Tuple[Any, ...]]) -> Optional[Tuple[bytes, Tuple[Any, ...]]]:
+        """``(records, style)`` of one ink stroke: a style record when ``style`` changes, then
+        the stroke record; ``None`` when the stroke cannot be written.  Nothing is appended to
+        the page's ink until the whole stroke is encoded."""
         points = list(stroke.points or [])
         if not points:
-            return
+            return None
         if stroke.controls is not None and len(points) >= 2 and len(stroke.controls) == len(points) - 1:
             points = flatten_bezier(points, stroke.controls, FLATTEN_SPACING)
         coords: List[Tuple[float, float, float]] = []
@@ -477,9 +480,9 @@ class _Writer:
             x, y = float(p.x) * U, float(p.y) * U
             width = float(p.width) if p.width is not None else 0.0
             r = max(0.0, width) / 2.0 * U if math.isfinite(width) else 0.0
-            if not (math.isfinite(x) and math.isfinite(y)) or max(abs(x), abs(y), r) > MAX_F32:
+            if not (math.isfinite(x) and math.isfinite(y)) or max(abs(x), abs(y), r) > MAX_COORD:
                 self.count("stroke_bad")
-                return
+                return None
             coords.append((x, y, r))
         if len(coords) == 1:
             coords.append(coords[0])  # a dot is two identical points, as the app writes it
@@ -487,17 +490,17 @@ class _Writer:
         variable = max(radii) - min(radii) > 1e-6 * max(1.0, max(radii))
         nominal_pt = float(stroke.width) if stroke.width and math.isfinite(stroke.width) and stroke.width > 0 else 0.0
         if variable:
-            nominal = nominal_pt / 2.0 * U or sorted(radii)[len(radii) // 2]
+            nominal = min(nominal_pt / 2.0 * U, MAX_COORD) or sorted(radii)[len(radii) // 2]
         else:
-            nominal = radii[0] or nominal_pt / 2.0 * U or HAIRLINE / 2.0 * U
-        if nominal <= 0 or nominal > MAX_F32:
+            nominal = radii[0] or min(nominal_pt / 2.0 * U, MAX_COORD) or HAIRLINE / 2.0 * U
+        if nominal <= 0:
             nominal = HAIRLINE / 2.0 * U
         highlighter = stroke.kind == "highlighter"
         r, g, b, a = _clamp_rgba(stroke.color)
         key = (r, g, b, 1.0 if highlighter else a, BLEND_MULTIPLY if highlighter else BLEND_NORMAL)
-        if style[0] != key:
+        out = bytearray()
+        if style != key:
             out += struct.pack(">H4dHQ", INK_STYLE, *key, 0)
-            style[0] = key
         ids = self.ids
         n = len(coords)
         dims = 3 if variable else 2
@@ -507,7 +510,7 @@ class _Writer:
         out += struct.pack(">IdII", 0, nominal, 0, n)
         if n <= 4:
             out += struct.pack(f">{n * dims}f", *(v for c in coords for v in c[:dims]))
-            return
+            return bytes(out), key
         quantised: List[List[int]] = []
         for k in range(dims):
             values = [c[k] for c in coords]
@@ -517,6 +520,7 @@ class _Writer:
             scale = 65535.0 / span
             quantised.append([min(65535, max(0, int(round((v - lo) * scale)))) for v in values])
         out += struct.pack(f">{n * dims}H", *(q[i] for i in range(n) for q in quantised))
+        return bytes(out), key
 
     # -- annotation -------------------------------------------------------------------------
 
@@ -533,15 +537,19 @@ class _Writer:
             if made is not None:
                 objects.append(made)
         ink = bytearray()
-        style: List[Any] = [None]
+        style: Optional[Tuple[Any, ...]] = None
         for stroke in page.strokes:
             try:
                 if stroke.kind == "fill":
                     objects += self._fill(stroke)
-                else:
-                    self._ink(stroke, ink, style)
-            except (ValueError, TypeError, OverflowError) as exc:
+                    continue
+                made = self._ink(stroke, style)
+            except (ValueError, TypeError, OverflowError, struct.error) as exc:
                 self.warn(f"Page {number}: a stroke was skipped ({exc})")
+                continue
+            if made is not None:
+                ink += made[0]
+                style = made[1]
         for box in page.texts:
             try:
                 made = self._text(box)

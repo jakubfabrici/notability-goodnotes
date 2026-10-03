@@ -368,6 +368,31 @@ def test_convert_api_writes_noteful(samples) -> None:
     assert io.BytesIO(result.data).read(4) == b"\xaa\xbb\xcc\xde"
 
 
+def test_a_failing_stroke_leaves_the_ink_intact(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gnnote.noteful import writer as nf_writer
+
+    calls = {"n": 0}
+    real = nf_writer._Ids.stroke_id
+
+    def flaky(self):  # noqa: ANN001 - the second stroke fails after its style record was built
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ValueError("boom")
+        return real(self)
+
+    monkeypatch.setattr(nf_writer._Ids, "stroke_id", flaky)
+    strokes = [Stroke([Point(10, 10, 1), Point(20, 20, 1)], color=(1, 0, 0, 1)),
+               Stroke([Point(30, 30, 1), Point(40, 40, 1)], color=(0, 1, 0, 1)),
+               Stroke([Point(1e12, 0, 1), Point(0, 0, 1)]),
+               Stroke([Point(50, 50, 1), Point(60, 60, 1)], color=(0, 0, 1, 1))]
+    doc = Document(pages=[Page(300, 400, strokes=strokes)])
+    back = read_noteful(write_noteful(doc, Seeded()))
+    assert [s.color for s in back.pages[0].strokes] == [(1, 0, 0, 1), (0, 0, 1, 1)]
+    assert any("a stroke was skipped (boom)" in w for w in doc.warnings)
+    assert any("not finite or too large" in w for w in doc.warnings)
+    assert not back.warnings
+
+
 def test_paper_generator_used_for_plain_pages() -> None:
     doc = Document(pages=[Page(300, 400, paper="dotted"), Page(300, 400, paper="dotted"), Page(300, 400, paper="grid")])
     data = write_noteful(doc, Seeded())
