@@ -7,7 +7,9 @@
 // `{name}` placeholders are substituted from `vars`.
 
 export const DEFAULT_LANG = "sk";
-export const LANGS = ["sk", "en"];
+export const LANGS = ["sk", "en", "uk"];
+// Each language is offered under its own name.
+export const LANG_NAMES = { sk: "Slovenčina", en: "English", uk: "Українська" };
 
 export const STRINGS = {
   sk: {
@@ -15,8 +17,7 @@ export const STRINGS = {
     "app.heading": "gnnote",
     "app.tagline": "Prevod poznámok medzi aplikáciami na ručné písanie. Rukopis zostáva upraviteľný. Súbor neopúšťa vaše zariadenie, pokiaľ nie je zapnutý serverový režim.",
     "app.supported": "Podporované aplikácie: {list}",
-    "lang.toggle": "English",
-    "lang.toggle.aria": "Prepnúť jazyk",
+    "lang.label": "Jazyk",
 
     "drop.label": "Vyberte alebo sem pretiahnite súbor s poznámkami",
     "drop.hint": "Ťuknutím otvoríte výber súborov",
@@ -58,7 +59,7 @@ export const STRINGS = {
     "result.download": "Stiahnuť",
     "result.share": "Zdieľať / Uložiť do Súborov",
     "result.share.failed": "Zdieľanie sa nepodarilo: {error}",
-    "result.open.hint": "Na iPade otvorte stiahnutý súbor v aplikácii Súbory a zdieľajte ho do Notability alebo GoodNotes.",
+    "result.open.hint": "Na iPade otvorte stiahnutý súbor v aplikácii Súbory a zdieľajte ho do cieľovej aplikácie.",
     "result.warnings.lang": "Upozornenia prevodníka sú v angličtine.",
     "result.hosted.hint": "Táto stránka beží v chránenom prostredí, preto sa súbor uloží ako {saved}. V aplikácii Súbory ho premenujte na {name} a otvorte ho v cieľovej aplikácii (GoodNotes otvorí aj súbor .goodnotes.zip priamo).",
     "result.hosted.failed": "Uloženie sa nepodarilo: {error}",
@@ -92,8 +93,7 @@ export const STRINGS = {
     "app.heading": "gnnote",
     "app.tagline": "Convert notes between handwriting apps with the handwriting kept editable. Your file never leaves the device unless the server engine is enabled.",
     "app.supported": "Supported apps: {list}",
-    "lang.toggle": "Slovensky",
-    "lang.toggle.aria": "Switch language",
+    "lang.label": "Language",
 
     "drop.label": "Choose or drop a notes file here",
     "drop.hint": "Tap to open the file picker",
@@ -135,7 +135,7 @@ export const STRINGS = {
     "result.download": "Download",
     "result.share": "Share / Save to Files",
     "result.share.failed": "Sharing failed: {error}",
-    "result.open.hint": "On iPad, open the downloaded file in Files and share it to Notability or GoodNotes.",
+    "result.open.hint": "On iPad, open the downloaded file in Files and share it to the target app.",
     "result.warnings.lang": "",
     "result.hosted.hint": "This page runs in a sandboxed host, so the file is saved as {saved}. Rename it to {name} in the Files app and open it in the target app (GoodNotes opens .goodnotes.zip directly).",
     "result.hosted.failed": "Saving failed: {error}",
@@ -163,6 +163,82 @@ export const STRINGS = {
     "footer.privacy": "In browser mode nothing is sent to a server.",
     "footer.source": "Source code",
     "footer.version": "version {version}",
+  },
+  uk: {
+    "app.title": "gnnote – перенесення нотаток між застосунками",
+    "app.heading": "gnnote",
+    "app.tagline": "Конвертування нотаток між застосунками для рукописних записів. Рукописний текст залишається редагованим. Файл не залишає ваш пристрій, якщо не ввімкнено серверний режим.",
+    "app.supported": "Підтримувані застосунки: {list}",
+    "lang.label": "Мова",
+
+    "drop.label": "Виберіть або перетягніть сюди файл із нотатками",
+    "drop.hint": "Торкніться, щоб відкрити вибір файлів",
+    "drop.choose": "Вибрати файл",
+    "file.selected": "{name} ({size})",
+    "file.badext": "Цей тип файлу не підтримується. Підтримувані файли: {list}.",
+    "file.direction": "{from} → {to}",
+
+    "options.heading": "Параметри",
+    "options.target": "Конвертувати в",
+    "options.paper.legend": "Папір під час конвертування в Notability",
+    "options.paper.plain": "Звичайний",
+    "options.paper.plain.help": "Вбудований папір GoodNotes замінюється папером Notability; сторінки масштабуються за шириною. Рекомендовано, перевірено на iPad.",
+    "options.paper.pdf": "PDF",
+    "options.paper.pdf.help": "Кожна сторінка вставляється як PDF-фон з оригінальним папером GoodNotes (зберігає лінії та сітку; менш перевірено).",
+    "options.paper.na": "Використовується лише під час конвертування в Notability.",
+    "options.pressure": "Зберегти натиск пера (змінна товщина)",
+    "options.pressure.help": "Вимкнено: кожен штрих має сталу товщину.",
+    "options.simplify": "Спрощення штрихів (pt)",
+    "options.simplify.help": "0 = вимкнено. Більші значення прибирають дрібні точки та зменшують файл.",
+
+    "convert": "Конвертувати",
+    "convert.again": "Конвертувати ще раз",
+    "reset": "Інший файл",
+
+    "progress.engine.loading": "Завантажую Python у браузер (уперше ~13 МБ)…",
+    "progress.engine.bytes": "Завантажено {loaded} з {total}",
+    "progress.engine.bytes.unknown": "Завантажено {loaded}",
+    "progress.engine.package": "Встановлюю конвертер…",
+    "progress.reading": "Читаю файл…",
+    "progress.converting": "Конвертую {name}…",
+    "progress.uploading": "Надсилаю на сервер…",
+
+    "result.heading": "Готово",
+    "result.file": "Вихідний файл",
+    "result.stats": "Статистика",
+    "result.warnings": "Попередження",
+    "result.warnings.none": "Попереджень немає.",
+    "result.download": "Завантажити",
+    "result.share": "Поділитися / Зберегти у Файли",
+    "result.share.failed": "Не вдалося поділитися: {error}",
+    "result.open.hint": "На iPad відкрийте завантажений файл у застосунку «Файли» й поділіться ним у потрібний застосунок.",
+    "result.warnings.lang": "Попередження конвертера показано англійською мовою.",
+    "result.hosted.hint": "Ця сторінка працює в ізольованому середовищі, тому файл буде збережено як {saved}. Перейменуйте його на {name} у застосунку «Файли» й відкрийте в потрібному застосунку (GoodNotes відкриває .goodnotes.zip напряму).",
+    "result.hosted.failed": "Не вдалося зберегти: {error}",
+
+    "stats.pages": "Сторінки",
+    "stats.strokes": "Штрихи",
+    "stats.images": "Зображення",
+    "stats.texts": "Текстові поля",
+    "stats.pdfs": "PDF-документи",
+    "stats.size": "Розмір",
+
+    "error.heading": "Не вдалося конвертувати",
+    "error.traceback": "Технічні подробиці",
+    "error.engine": "Не вдалося завантажити конвертер: {error}",
+    "error.engine.help": "Перевірте підключення до інтернету (Python завантажується з CDN) або запустіть локальний сервер: python -m gnnote.server",
+    "error.server": "Сервер відповів помилкою {status}.",
+    "error.toolarge": "Файл ({size}) більший за ліміт сервера {limit}.",
+    "error.noworker": "Цей браузер не підтримує модульні Web Workers. Використайте Safari 15+, Chrome або Firefox.",
+
+    "engine.server": "Конвертер: сервер",
+    "engine.browser": "Конвертер: у браузері (Pyodide)",
+    "engine.unknown": "Конвертер: визначаю…",
+    "engine.failed": "Конвертер: недоступний",
+
+    "footer.privacy": "У режимі браузера нічого не надсилається на сервер.",
+    "footer.source": "Вихідний код",
+    "footer.version": "версія {version}",
   },
 };
 
@@ -217,7 +293,14 @@ export function initialLang() {
   } catch (e) {
     /* storage may be unavailable (private mode) */
   }
-  return DEFAULT_LANG;
+  // No stored choice: follow the browser (Czech readers get Slovak); other languages get English.
+  const wanted = (typeof navigator !== "undefined" && (navigator.languages || [navigator.language])) || [];
+  for (const tag of wanted) {
+    const base = String(tag || "").toLowerCase().split("-")[0];
+    if (base === "cs") return "sk";
+    if (LANGS.includes(base)) return base;
+  }
+  return wanted.length ? "en" : DEFAULT_LANG;
 }
 
 export function rememberLang(lang) {

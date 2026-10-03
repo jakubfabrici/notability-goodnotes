@@ -12,7 +12,7 @@
 //                                     when it exists, else Playwright's own Chromium)
 //          [--timeout MS]             overall conversion timeout (default: 300000)
 //          [--to FORMAT] [--paper plain|pdf] [--no-pressure] [--simplify N]
-//          [--lang sk|en]             click the language toggle to this language first
+//          [--lang sk|en|uk]          switch the page to this language first
 //          [--verbose]                echo browser console messages
 //
 // Prints one JSON line {ok, outputPath, name, size, stats, warnings, engine, ms}
@@ -185,10 +185,7 @@ async function main() {
     });
 
     await page.goto(origin + "/", { waitUntil: "load" });
-    if (args.lang) {
-      const current = await page.evaluate(() => document.documentElement.lang);
-      if (current !== args.lang) await page.click("#lang-toggle");
-    }
+    if (args.lang) await page.selectOption("#lang", args.lang);
     await page.setInputFiles("#file", input);
     if (args.to) await page.selectOption("#target", args.to);
     if (args.paper) await page.check('input[name="paper"][value="' + args.paper + '"]');

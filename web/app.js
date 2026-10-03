@@ -7,7 +7,7 @@
 // pyodide/ directory when pyodide/pyodide.mjs answers a HEAD request
 // (vendored build), else from the jsDelivr CDN.
 
-import { t, applyLanguage, initialLang, rememberLang, currentLang } from "./i18n.js";
+import { t, applyLanguage, initialLang, rememberLang, currentLang, LANGS, LANG_NAMES } from "./i18n.js";
 import { FORMATS } from "./formats.js";
 
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
@@ -15,7 +15,7 @@ const STAT_ORDER = ["pages", "strokes", "images", "texts", "pdfs"];
 
 const $ = (id) => document.getElementById(id);
 const el = {
-  langToggle: $("lang-toggle"),
+  lang: $("lang"),
   dropzone: $("dropzone"),
   file: $("file"),
   choose: $("choose"),
@@ -202,8 +202,16 @@ function setLanguage(lang) {
   if (state.last) renderResult(state.last);
 }
 
-el.langToggle.addEventListener("click", () => {
-  setLanguage(currentLang() === "sk" ? "en" : "sk");
+for (const code of LANGS) {
+  const opt = document.createElement("option");
+  opt.value = code;
+  opt.lang = code;
+  opt.textContent = LANG_NAMES[code] || code;
+  el.lang.appendChild(opt);
+}
+
+el.lang.addEventListener("change", () => {
+  setLanguage(el.lang.value);
 });
 
 // ---------- file selection ----------
@@ -717,6 +725,7 @@ function loadVersion() {
 }
 
 applyLanguage(initialLang());
+el.lang.value = currentLang();
 setEngineStatus();
 renderSupported();
 updateDirection();
