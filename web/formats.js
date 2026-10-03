@@ -35,6 +35,42 @@ export const FORMATS = [
     "defaultTarget": "notability"
   },
   {
+    "id": "xournalpp",
+    "name": "Xournal++",
+    "extension": ".xopp",
+    "inputExtensions": [
+      ".xopp",
+      ".xoj"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
+  },
+  {
+    "id": "saber",
+    "name": "Saber",
+    "extension": ".sba",
+    "inputExtensions": [
+      ".sba",
+      ".sbn2",
+      ".sbn"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
+  },
+  {
+    "id": "excalidraw",
+    "name": "Excalidraw",
+    "extension": ".excalidraw",
+    "inputExtensions": [
+      ".excalidraw"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
+  },
+  {
     "id": "collanote",
     "name": "CollaNote",
     "extension": ".cnote",

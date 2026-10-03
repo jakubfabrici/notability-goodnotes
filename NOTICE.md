@@ -16,6 +16,23 @@ implementation written from the byte-level research notes in `docs/`.
   is furnished to do so, subject to the following conditions: The above copyright notice and
   this permission notice shall be included in all copies or substantial portions of the
   Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND."
+  The open-format codecs adapt further parts of inkterop under the same notice: the shape of
+  the Xournal++ output in `gnnote/xournalpp/writer.py` follows inkterop's xopp writer
+  (`core/src/inkterop/formats/xopp/`); the BSON codec `gnnote/saber/bson.py` and the document
+  shape of `gnnote/saber/writer.py` are adapted from inkterop's Saber reader and writer
+  (`core/src/inkterop/formats/saber/`); the freedraw width law and the element field set of
+  `gnnote/excalidraw/` are adapted from inkterop's Excalidraw codec
+  (`core/src/inkterop/formats/excalidraw.py`).
+* The Excalidraw codec follows the scene format of **Excalidraw**
+  (https://github.com/excalidraw/excalidraw), MIT License, Copyright (c) 2020 Excalidraw; its
+  JSON schema documentation and `restore.ts` were used for the element fields.
+* **Xournal++** (https://github.com/xournalpp/xournalpp, GPL-2.0) and **Saber**
+  (https://github.com/saber-notes/saber, GPL-3.0) were consulted for format facts only (their
+  loaders, savers and test files); no code was copied. Their test files are fetched by the test
+  suite as external test data and are not part of this repository.
+* The Saber ink width law is the documented radius formula of **perfect-freehand**
+  (https://github.com/steveruizok/perfect-freehand, Dart port by Adil Hanney, MIT); no code was
+  copied.
 * The PencilKit format description in `docs/collanote.md` section 5 builds on inkterop's
   `docs/formats/pencilkit.md` by Caleb (cable729), licensed CC BY 4.0
   (https://creativecommons.org/licenses/by/4.0/); the stroke transform, deleted-stroke and

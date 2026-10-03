@@ -12,7 +12,9 @@ from __future__ import annotations
 import importlib
 import io
 import os
+import re
 import zipfile
+import zlib
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -136,6 +138,48 @@ def _sniff_remarkable(data: bytes, names: Optional[List[str]]) -> bool:
         any(n.endswith(".metadata") for n in top) or any(n.endswith(".rm") for n in names))
 
 
+_XML_ROOT_RE = re.compile(rb"^(?:<\?xml[^>]{0,200}\?>)?\s*(?:<!--.{0,2000}?-->\s*)*<(?:xournal|MrWriter)[\s>/]", re.S)
+
+
+def _sniff_xournalpp(data: bytes, names: Optional[List[str]]) -> bool:
+    """gzip or plain XML whose root element is ``<xournal>`` (or MrWriter's), or the ZIP
+    package with ``content.xml`` and Xournal++'s ``mimetype`` / ``META-INF/version``."""
+    if names is not None:
+        return "content.xml" in names and ("mimetype" in names or "META-INF/version" in names)
+    try:
+        if data[:2] == b"\x1f\x8b":
+            head = zlib.decompressobj(47).decompress(data[:65536], 4096)
+        else:
+            head = data[:4096]
+    except (zlib.error, ValueError):
+        return False
+    return bool(_XML_ROOT_RE.match(head.lstrip(b"\xef\xbb\xbf \t\r\n")))
+
+
+def _sniff_saber(data: bytes, names: Optional[List[str]]) -> bool:
+    """A ZIP holding a ``.sbn2`` / ``.sbn`` note (``.sba``), a BSON document that is exactly
+    the file and starts with the int32 version ``v`` (``.sbn2``), or legacy JSON with Saber's
+    ``v`` key and a ``z`` / ``ni`` key or a stroke list ``s`` near the start (``.sbn``)."""
+    if names is not None:
+        return any(n.lower().endswith((".sbn2", ".sbn")) for n in names)
+    if len(data) >= 12 and data[4:7] == b"\x10v\x00" and int.from_bytes(data[:4], "little") == len(data):
+        return True
+    head = data[:65536].lstrip(b"\xef\xbb\xbf \t\r\n")
+    return head[:1] == b"{" and bool(re.search(rb'"v"\s*:\s*\d', head)) \
+        and bool(re.search(rb'"(?:z|ni)"\s*:|"s"\s*:\s*\[', head))
+
+
+_EXCALIDRAW_TYPE_RE = re.compile(rb'"type"\s*:\s*"excalidraw(?:/clipboard)?"')
+
+
+def _sniff_excalidraw(data: bytes, names: Optional[List[str]]) -> bool:
+    """A JSON object whose ``"type"`` is ``"excalidraw"`` within its first 4 KB."""
+    if names is not None:
+        return False
+    head = data[:4096].lstrip(b"\xef\xbb\xbf \t\r\n")
+    return head[:1] == b"{" and bool(_EXCALIDRAW_TYPE_RE.search(head))
+
+
 def _sniff_pdf(data: bytes, names: Optional[List[str]]) -> bool:
     # ``%PDF`` within the first 1024 bytes (readers tolerate junk before the header).  A ZIP
     # archive -- readable or damaged (``PK`` signature) -- is never a PDF, even when its
@@ -163,6 +207,24 @@ FORMATS: Dict[str, NoteFormat] = {
             input_extensions=(".noteful",), sniff=_sniff_noteful,
             reader="gnnote.noteful.reader:read_noteful",
             writer="gnnote.noteful.writer:write_noteful",
+        ),
+        NoteFormat(
+            id="xournalpp", name="Xournal++", extension=".xopp",
+            input_extensions=(".xopp", ".xoj"), sniff=_sniff_xournalpp,
+            reader="gnnote.xournalpp.reader:read_xopp",
+            writer="gnnote.xournalpp.writer:write_xopp",
+        ),
+        NoteFormat(
+            id="saber", name="Saber", extension=".sba",
+            input_extensions=(".sba", ".sbn2", ".sbn"), sniff=_sniff_saber,
+            reader="gnnote.saber.reader:read_saber",
+            writer="gnnote.saber.writer:write_saber",
+        ),
+        NoteFormat(
+            id="excalidraw", name="Excalidraw", extension=".excalidraw",
+            input_extensions=(".excalidraw",), sniff=_sniff_excalidraw,
+            reader="gnnote.excalidraw.reader:read_excalidraw",
+            writer="gnnote.excalidraw.writer:write_excalidraw",
         ),
         # Read only: writing .cnote files needs tests in the app first (docs/collanote.md).
         NoteFormat(

@@ -71,6 +71,10 @@ gnnote/
   flexcil/reader.py      read_flexcil(data: bytes, document=None) -> Document  (Flexcil .flx / .flex, read only)
   remarkable/scene.py    reMarkable v6 scene: tagged blocks, CRDT order, lines, glyphs, text
   remarkable/reader.py   read_remarkable(data: bytes) -> Document      (reMarkable .rmdoc / .rm, read only)
+  codecutil.py           helpers of the open-format codecs: image sniffing, polylines, bounded ZIP / inflate
+  xournalpp/             Xournal++ .xopp / .xoj: reader.read_xopp, writer.write_xopp (docs/xournalpp.md)
+  saber/                 Saber .sba / .sbn2 / .sbn: bson, reader.read_saber, writer.write_saber (docs/saber.md)
+  excalidraw/            Excalidraw .excalidraw: reader.read_excalidraw, writer.write_excalidraw (docs/excalidraw.md)
   formats.py             the format registry: id, name, extensions, content sniffer, reader / writer paths
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
@@ -471,8 +475,9 @@ Their byte layouts, mappings and open questions are in their own notes:
   `xrayshan/notability-reader`, `jvns/svg2notability`, `samuelsadok/notesconverter`,
   `nokcha0/Notability-notes-converter`, `cable729/inkterop`, `miroreo/denotability`, the
   CollaNote / PencilKit samples `enisogdum/YTU-Archive` (sparse checkout) and `r987r/Flashcard`,
-  and for the other apps `janptn/flexcil-backup-viewer`, `jeonghyeon-net/flexcil-codex-plugin`,
-  `ricklupton/rmscene`, `ricklupton/rmc` and `szainababbas/RM-Sticker-Press`), taken from
+  for the other apps `janptn/flexcil-backup-viewer`, `jeonghyeon-net/flexcil-codex-plugin`,
+  `ricklupton/rmscene`, `ricklupton/rmc` and `szainababbas/RM-Sticker-Press`, and the test
+  files of `xournalpp/xournalpp` and `saber-notes/saber` (sparse checkouts)), taken from
   `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
   `tests/.samples/` (skipped when offline). Large single files (`LARGE_FILES`: a 100 MB CollaNote
   notebook) are used when present and downloaded only with `GNNOTE_LARGE_SAMPLES=1` (SHA-256

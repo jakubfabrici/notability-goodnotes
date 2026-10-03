@@ -81,11 +81,19 @@ REPOS: Dict[str, Tuple[str, str]] = {
     "rmc": ("https://github.com/ricklupton/rmc", "da87813a31496d156ca6ea8a27bf5128670fb45a"),
     "RM-Sticker-Press": ("https://github.com/szainababbas/RM-Sticker-Press",
                          "4ecc7387a07ca384e62cfefd1d670a548cea5314"),
+    # The Saber (GPL-3.0) and Xournal++ (GPL-2.0) app repositories are used only for their
+    # test files, as external test data fetched here; none of their files or code is part of
+    # gnnote.
+    "saber": ("https://github.com/saber-notes/saber",
+              "f143d84b46cb6faf795b13c00aee6d31f69e5da9"),
+    "xournalpp": ("https://github.com/xournalpp/xournalpp",
+                  "9882ffaaf2c012a1de4c33161eb4284468d84b9d"),
 }
 
 # Repositories too large to check out whole: only these directories are checked out (a
 # partial clone without blobs plus a cone-mode sparse checkout, so only their files are
-# downloaded).  Repositories not listed here are checked out completely.
+# downloaded; cone mode also brings the files directly in each listed directory's parents).
+# Repositories not listed here are checked out completely.
 SPARSE: Dict[str, Tuple[str, ...]] = {
     "flexcil-backup-viewer": ("puplic",),  # cone mode adds the top-level files, forms.flx among them
     "flexcil-codex-plugin": ("plugins/flexcil-codex-plugin/src",),
@@ -93,6 +101,8 @@ SPARSE: Dict[str, Tuple[str, ...]] = {
     "rmc": ("tests/rm",),
     "RM-Sticker-Press": ("RM-sticker-press/samples",),
     "YTU-Archive": ("1-2/Semiconductor/slide",),  # 63 MB of a much larger repository
+    "saber": ("test/sbn_examples", "test/demo_notes"),
+    "xournalpp": ("test/files/load", "test/files/packaged_xopp"),
 }
 
 # name -> (URL at a pinned commit, SHA-256, size in bytes); see the module docstring.
@@ -320,6 +330,30 @@ class SampleSet:
         if not files:
             pytest.skip("no .rmdoc sample files available")
         return files
+
+    def xournalpp_files(self) -> List[Path]:
+        """Xournal++'s own test files (``test/files``): gzip, plain-XML and ZIP-packaged."""
+        root = self.repo("xournalpp") / "test" / "files"
+        files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix in (".xopp", ".xoj"))
+        if not files:
+            pytest.skip("no Xournal++ sample files available")
+        return files
+
+    def saber_files(self) -> List[Path]:
+        """Saber's own example notes (``test/sbn_examples``, ``test/demo_notes``)."""
+        root = self.repo("saber") / "test"
+        files = sorted(p for sub in ("sbn_examples", "demo_notes") for p in (root / sub).glob("*")
+                       if p.is_file() and p.suffix in (".sbn", ".sbn2"))
+        if not files:
+            pytest.skip("no Saber sample files available")
+        return files
+
+    def inkterop_fixture(self, *parts: str) -> Path:
+        """A CC0 fixture of inkterop (``core/tests/fixtures/...``)."""
+        path = self.repo("inkterop").joinpath("core", "tests", "fixtures", *parts)
+        if not path.is_file():
+            pytest.skip(f"inkterop fixture {'/'.join(parts)} not available")
+        return path
 
     def notability_template(self) -> Path:
         path = self.repo("notability-to-svg") / "example.note"
