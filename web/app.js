@@ -141,8 +141,17 @@ function formatById(id) {
   return FORMATS.find((f) => f.id === id) || null;
 }
 
+// A .zip is accepted as well: OneDrive downloads a OneNote notebook folder as one, and a
+// renamed note file may end in .zip too. The converter recognises the format by content.
+const CONTAINER_EXTENSIONS = [".zip"];
+
 function readableExtensions() {
   return FORMATS.filter((f) => f.readable).flatMap((f) => f.inputExtensions);
+}
+
+function containerExtensionOf(name) {
+  const lower = String(name || "").toLowerCase();
+  return CONTAINER_EXTENSIONS.find((ext) => lower.endsWith(ext)) || null;
 }
 
 function sourceFormatOf(name) {
@@ -245,10 +254,10 @@ function acceptFile(file) {
   show(el.result, false);
   state.last = null;
   if (!file) return;
-  if (!sourceFormatOf(file.name)) {
+  if (!sourceFormatOf(file.name) && !containerExtensionOf(file.name)) {
     state.file = null;
     show(el.fileInfo, false);
-    el.fileError.textContent = t("file.badext", { list: readableExtensions().join(", ") });
+    el.fileError.textContent = t("file.badext", { list: readableExtensions().concat(CONTAINER_EXTENSIONS).join(", ") });
     show(el.fileError, true);
     updateConvertButton();
     return;
@@ -520,10 +529,10 @@ function swapExtension(name, target) {
   const dst = formatById(target);
   const src = formatById(sourceFormatOf(name));
   let stem = name;
-  if (src) {
-    const ext = src.inputExtensions.find((e) => name.toLowerCase().endsWith(e));
-    if (ext) stem = name.slice(0, name.length - ext.length);
-  }
+  const ext = src
+    ? src.inputExtensions.find((e) => name.toLowerCase().endsWith(e))
+    : containerExtensionOf(name);
+  if (ext) stem = name.slice(0, name.length - ext.length);
   return stem + (dst ? dst.extension : "");
 }
 

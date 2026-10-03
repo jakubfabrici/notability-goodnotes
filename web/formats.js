@@ -22,5 +22,16 @@ export const FORMATS = [
     "readable": true,
     "writable": true,
     "defaultTarget": "goodnotes"
+  },
+  {
+    "id": "onenote",
+    "name": "OneNote",
+    "extension": ".one",
+    "inputExtensions": [
+      ".one"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
   }
 ];

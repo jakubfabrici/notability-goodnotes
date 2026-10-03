@@ -41,9 +41,20 @@ class _UsageError(Exception):
     pass
 
 
+def _target_format(value: str) -> str:
+    """``--to`` value -> a writable format id, with a clear message for read-only apps."""
+    targets = ", ".join(f.id for f in _formats.writable())
+    fmt = _formats.FORMATS.get(value.strip().lower())
+    if fmt is None:
+        raise argparse.ArgumentTypeError(f"invalid choice: {value!r} (choose from {targets})")
+    if not fmt.writable:
+        raise argparse.ArgumentTypeError(f"{fmt.name} files can be read but not written (choose from {targets})")
+    return fmt.id
+
+
 def _add_write_options(parser: argparse.ArgumentParser, ribbon: bool = True, title: bool = True) -> None:
     targets = [f.id for f in _formats.writable()]
-    parser.add_argument("--to", dest="target", choices=targets, default=None, metavar="FORMAT",
+    parser.add_argument("--to", dest="target", type=_target_format, default=None, metavar="FORMAT",
                         help="output format: " + ", ".join(targets) + " (default: GoodNotes and Notability "
                              "swap, other apps go to Notability)")
     parser.add_argument("--paper", choices=("plain", "pdf"), default="plain",
