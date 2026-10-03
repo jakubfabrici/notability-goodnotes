@@ -1,0 +1,8 @@
+services:
+  gnnote:
+    build: .
+    image: gnnote:latest
+    container_name: gnnote
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

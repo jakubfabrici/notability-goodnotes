@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+.venv/
+node_modules/
+.cache/
+tests/.samples/
+*.note
+*.goodnotes
+!tests/fixtures/**

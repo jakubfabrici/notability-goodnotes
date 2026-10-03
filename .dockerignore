@@ -1,0 +1,17 @@
+.git
+.github
+.gitignore
+.pytest_cache
+.venv
+.cache
+__pycache__
+*.pyc
+*.egg-info
+build
+dist
+node_modules
+tests/.samples
+tests/e2e/node_modules
+*.note
+*.goodnotes
+*.log

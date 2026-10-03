@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Convert GoodNotes (.goodnotes) and Notability (.note) files in the browser, handwriting stays editable.">
+  <title>gnnote – GoodNotes ⇄ Notability</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b6fd6'/%3E%3Cpath d='M7 20c4-10 8 4 12-6s5 2 7 0' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+  <noscript><p class="noscript">This page needs JavaScript.</p></noscript>
+
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <h1 data-i18n="app.heading">gnnote</h1>
+    </div>
+    <button id="lang-toggle" class="btn btn-ghost" type="button"
+            data-i18n="lang.toggle" data-i18n-aria="lang.toggle.aria">English</button>
+  </header>
+
+  <main class="page">
+    <p class="tagline" data-i18n="app.tagline"></p>
+
+    <!-- 1. file -->
+    <section class="card" id="step-file">
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-labelledby="drop-label">
+        <input id="file" type="file" accept=".goodnotes,.note" class="visually-hidden" data-i18n-aria="drop.label">
+        <span class="drop-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>
+          </svg>
+        </span>
+        <span id="drop-label" class="drop-label" data-i18n="drop.label"></span>
+        <span class="drop-hint" data-i18n="drop.hint"></span>
+        <button id="choose" type="button" class="btn btn-secondary" data-i18n="drop.choose"></button>
+      </div>
+      <div id="file-info" class="file-info" hidden>
+        <div class="file-name" id="file-name"></div>
+        <div class="file-direction" id="file-direction"></div>
+      </div>
+      <p id="file-error" class="inline-error" hidden></p>
+    </section>
+
+    <!-- 2. options -->
+    <section class="card" id="step-options">
+      <h2 data-i18n="options.heading"></h2>
+      <fieldset id="paper-fieldset" class="fieldset">
+        <legend data-i18n="options.paper.legend"></legend>
+        <label class="radio">
+          <input type="radio" name="paper" value="plain" checked>
+          <span class="radio-body">
+            <span class="radio-title" data-i18n="options.paper.plain"></span>
+            <span class="help" data-i18n="options.paper.plain.help"></span>
+          </span>
+        </label>
+        <label class="radio">
+          <input type="radio" name="paper" value="pdf">
+          <span class="radio-body">
+            <span class="radio-title" data-i18n="options.paper.pdf"></span>
+            <span class="help" data-i18n="options.paper.pdf.help"></span>
+          </span>
+        </label>
+        <p id="paper-na" class="help muted" data-i18n="options.paper.na" hidden></p>
+      </fieldset>
+
+      <label class="check">
+        <input id="pressure" type="checkbox" checked>
+        <span class="radio-body">
+          <span class="radio-title" data-i18n="options.pressure"></span>
+          <span class="help" data-i18n="options.pressure.help"></span>
+        </span>
+      </label>
+
+      <label class="number" for="simplify">
+        <span class="radio-body">
+          <span class="radio-title" data-i18n="options.simplify"></span>
+          <span class="help" data-i18n="options.simplify.help"></span>
+        </span>
+        <input id="simplify" type="number" min="0" max="20" step="0.1" value="0" inputmode="decimal">
+      </label>
+    </section>
+
+    <!-- 3. action -->
+    <div class="actions">
+      <button id="convert" type="button" class="btn btn-primary" disabled data-i18n="convert"></button>
+      <button id="reset" type="button" class="btn btn-ghost" hidden data-i18n="reset"></button>
+    </div>
+
+    <!-- progress -->
+    <section id="progress" class="card progress" hidden aria-live="polite">
+      <div class="progress-row">
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="progress-message"></span>
+      </div>
+      <div id="progress-bytes" class="progress-bytes" hidden></div>
+      <div class="bar" id="progress-bar" hidden><div class="bar-fill" id="progress-fill"></div></div>
+    </section>
+
+    <!-- result -->
+    <section id="result" class="card result" hidden>
+      <h2 data-i18n="result.heading"></h2>
+      <div class="result-file">
+        <span class="label" data-i18n="result.file"></span>
+        <strong id="result-name" class="result-name"></strong>
+      </div>
+      <div class="result-buttons">
+        <a id="download" class="btn btn-primary" href="#" download data-i18n="result.download"></a>
+        <button id="share" type="button" class="btn btn-secondary" hidden data-i18n="result.share"></button>
+      </div>
+      <p id="hosted-hint" class="help muted" hidden></p>
+      <p class="help muted" data-i18n="result.open.hint"></p>
+      <h3 data-i18n="result.stats"></h3>
+      <table class="stats" id="stats"><tbody></tbody></table>
+      <h3 data-i18n="result.warnings"></h3>
+      <p id="warnings-lang" class="help muted" data-i18n="result.warnings.lang" hidden></p>
+      <ul id="warnings" class="warnings"></ul>
+      <p id="warnings-none" class="help muted" data-i18n="result.warnings.none" hidden></p>
+    </section>
+
+    <!-- error -->
+    <section id="error" class="card error" hidden role="alert">
+      <h2 data-i18n="error.heading"></h2>
+      <p id="error-message"></p>
+      <p id="error-help" class="help" hidden></p>
+      <details id="error-details" hidden>
+        <summary data-i18n="error.traceback"></summary>
+        <pre id="error-traceback"></pre>
+      </details>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span id="engine-status" class="engine" data-i18n="engine.unknown"></span>
+    <span class="sep" aria-hidden="true">·</span>
+    <span data-i18n="footer.privacy"></span>
+    <span class="sep" aria-hidden="true">·</span>
+    <a href="https://github.com/jakubfabrici/notability-goodnotes" rel="noopener" data-i18n="footer.source"></a>
+    <span id="version" class="version"></span>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
