@@ -46,9 +46,11 @@ devices.
 
 ### Web page (no installation)
 
-Once GitHub Pages is enabled for the repository the converter is served at
-`https://<user>.github.io/notability-goodnotes/` (for this repository:
-`https://jakubfabrici.github.io/notability-goodnotes/`). Open it on the iPad (or any
+`.github/workflows/pages.yml` publishes the page to GitHub Pages at
+`https://<user>.github.io/notability-goodnotes/` on every push to `main`. Two one-time
+settings are needed first: Settings -> Pages -> Source "GitHub Actions", and either a public
+repository or a paid GitHub plan (GitHub Free has no Pages for private repositories). Until
+then the workflow ends with a notice and deploys nothing. Open the page on the iPad (or any
 browser), choose or drop a `.goodnotes` or `.note` file, pick the options, press Convert and
 download or share the result into the other app. The conversion runs in the browser with
 Pyodide (about 13.5 MB downloaded on first use); files never leave the device.
@@ -142,7 +144,8 @@ NODE_PATH=$(npm root -g) node tests/e2e/run.js --dist dist --input Notebook.good
 ```
 
 CI (`.github/workflows/ci.yml`) runs the test suite on Python 3.11 and 3.12 and the browser
-test with Chromium; `pages.yml` deploys `dist/` to GitHub Pages on pushes to `main`.
+test with Chromium, once per pull-request change and on pushes to `main`; `pages.yml` deploys
+`dist/` to GitHub Pages on pushes to `main` when Pages is set up.
 
 ## Documentation
 

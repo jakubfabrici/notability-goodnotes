@@ -1,13 +1,16 @@
 name: CI
 
 on:
+  # A pull request runs CI once, through the pull_request event; pushes run it only on main.
+  # Listening to pushes on every branch as well ran each PR commit twice (and sent two
+  # failure notifications for one broken commit).
   push:
-    branches: ["**"]
+    branches: ["main"]
   pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
