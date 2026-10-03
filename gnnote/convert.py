@@ -145,11 +145,19 @@ def document_stats(doc: Document) -> Dict[str, int]:
 
 
 def output_filename(filename: str, target: str) -> str:
-    """``filename`` with its extension swapped for the target format's one."""
+    """``filename`` with its extension swapped for the target format's one.
+
+    A zipped note (``X.cnote.zip``, how a package arrives) loses both extensions.
+    """
     base = os.path.basename(filename or "") or "converted"
     stem, ext = os.path.splitext(base)
     if not stem:  # e.g. ".note"
         stem = base
+    if ext.lower() == ".zip":
+        inner_stem, inner_ext = os.path.splitext(stem)
+        known = {e for f in _formats.FORMATS.values() for e in f.input_extensions}
+        if inner_stem and inner_ext.lower() in known:
+            stem = inner_stem
     return stem + _formats.get(target).extension
 
 

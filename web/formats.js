@@ -22,5 +22,16 @@ export const FORMATS = [
     "readable": true,
     "writable": true,
     "defaultTarget": "goodnotes"
+  },
+  {
+    "id": "collanote",
+    "name": "CollaNote",
+    "extension": ".cnote",
+    "inputExtensions": [
+      ".cnote"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
   }
 ];
