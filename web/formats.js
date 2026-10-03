@@ -22,5 +22,17 @@ export const FORMATS = [
     "readable": true,
     "writable": true,
     "defaultTarget": "goodnotes"
+  },
+  {
+    "id": "xournalpp",
+    "name": "Xournal++",
+    "extension": ".xopp",
+    "inputExtensions": [
+      ".xopp",
+      ".xoj"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
   }
 ];

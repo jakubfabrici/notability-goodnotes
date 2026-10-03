@@ -218,7 +218,8 @@ def test_batch_to_filter_and_failure(note_file: Path, goodnotes_file: Path, tmp_
     empty = tmp_path / "empty"
     empty.mkdir()
     assert main(["batch", str(empty)]) == 0
-    assert "no .goodnotes or .note files" in capsys.readouterr().out
+    listed = capsys.readouterr().out  # every readable app's extensions, sorted
+    assert listed.startswith("no ") and " .goodnotes or " in listed and ".note" in listed and " files in " in listed
     assert main(["batch", str(tmp_path / "missing-dir")]) == 1
     assert "not a directory" in capsys.readouterr().err
 

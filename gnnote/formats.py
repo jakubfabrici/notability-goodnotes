@@ -12,7 +12,9 @@ from __future__ import annotations
 import importlib
 import io
 import os
+import re
 import zipfile
+import zlib
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -80,6 +82,24 @@ def _sniff_notability(data: bytes, names: Optional[List[str]]) -> bool:
     return bool(names) and any(n == "Session.plist" or n.endswith("/Session.plist") for n in names)
 
 
+_XML_ROOT_RE = re.compile(rb"^(?:<\?xml[^>]{0,200}\?>)?\s*(?:<!--.{0,2000}?-->\s*)*<(?:xournal|MrWriter)[\s>/]", re.S)
+
+
+def _sniff_xournalpp(data: bytes, names: Optional[List[str]]) -> bool:
+    """gzip or plain XML whose root element is ``<xournal>`` (or MrWriter's), or the ZIP
+    package with ``content.xml`` and Xournal++'s ``mimetype`` / ``META-INF/version``."""
+    if names is not None:
+        return "content.xml" in names and ("mimetype" in names or "META-INF/version" in names)
+    try:
+        if data[:2] == b"\x1f\x8b":
+            head = zlib.decompressobj(47).decompress(data[:65536], 4096)
+        else:
+            head = data[:4096]
+    except (zlib.error, ValueError):
+        return False
+    return bool(_XML_ROOT_RE.match(head.lstrip(b"\xef\xbb\xbf \t\r\n")))
+
+
 FORMATS: Dict[str, NoteFormat] = {
     f.id: f
     for f in (
@@ -94,6 +114,12 @@ FORMATS: Dict[str, NoteFormat] = {
             input_extensions=(".note",), sniff=_sniff_notability,
             reader="gnnote.notability.reader:read_note",
             writer="gnnote.notability.writer:write_note",
+        ),
+        NoteFormat(
+            id="xournalpp", name="Xournal++", extension=".xopp",
+            input_extensions=(".xopp", ".xoj"), sniff=_sniff_xournalpp,
+            reader="gnnote.xournalpp.reader:read_xopp",
+            writer="gnnote.xournalpp.writer:write_xopp",
         ),
     )
 }

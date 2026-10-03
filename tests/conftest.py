@@ -49,12 +49,19 @@ REPOS: Dict[str, Tuple[str, str]] = {
                  "f16eb8d2a425637aab629e6cc90c00a18f17009f"),
     "denotability": ("https://github.com/miroreo/denotability",
                      "7c44cfd5627b4875b7bcbd262c3997fb130b001e"),
+    # The Xournal++ (GPL-2.0) app repository is used only for its test files, as external test
+    # data fetched here; none of its files or code is part of gnnote.
+    "xournalpp": ("https://github.com/xournalpp/xournalpp",
+                  "9882ffaaf2c012a1de4c33161eb4284468d84b9d"),
 }
 
 # Repositories too large to check out whole: only these directories are checked out (a
 # partial clone without blobs plus a cone-mode sparse checkout, so only their files are
-# downloaded).  Repositories not listed here are checked out completely.
-SPARSE: Dict[str, Tuple[str, ...]] = {}
+# downloaded; cone mode also brings the files directly in each listed directory's parents).
+# Repositories not listed here are checked out completely.
+SPARSE: Dict[str, Tuple[str, ...]] = {
+    "xournalpp": ("test/files/load", "test/files/packaged_xopp"),
+}
 
 
 def _samples_root() -> Path:
@@ -193,6 +200,14 @@ class SampleSet:
                 pass
         if not files:
             pytest.skip("no .note sample files available")
+        return files
+
+    def xournalpp_files(self) -> List[Path]:
+        """Xournal++'s own test files (``test/files``): gzip, plain-XML and ZIP-packaged."""
+        root = self.repo("xournalpp") / "test" / "files"
+        files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix in (".xopp", ".xoj"))
+        if not files:
+            pytest.skip("no Xournal++ sample files available")
         return files
 
     def notability_template(self) -> Path:

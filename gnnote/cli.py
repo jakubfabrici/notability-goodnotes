@@ -250,7 +250,7 @@ def _cmd_formats(args: argparse.Namespace, out: Any, err: Any) -> int:
     for f in _formats.FORMATS.values():
         modes = "read and write" if f.readable and f.writable else ("read only" if f.readable else "write only")
         exts = ", ".join(f.input_extensions)
-        print(f"{f.id:<12} {f.name:<12} {exts:<14} {modes}", file=out)
+        print(f"{f.id:<12} {f.name:<12} {exts:<18} {modes}", file=out)
     return 0
 
 

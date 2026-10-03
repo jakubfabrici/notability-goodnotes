@@ -8,6 +8,9 @@ Neither app imports the other's format, and both export only PDF or images for e
 gnnote reads the real container formats (documented in `docs/`) and writes files the other
 app opens as its own.
 
+It also reads and writes the open formats of other note apps, with the ink kept editable
+(see [Other apps](#other-apps)): **Xournal++** (`.xopp`, `.xoj`).
+
 * Pure Python 3.11+, standard library only, MIT licence, clean-room implementation.
 * Runs as a web page in the browser (Pyodide, nothing is uploaded anywhere), as a command-line
   tool, as a Python library, or as a small self-hosted server (also as a Docker container).
@@ -35,6 +38,24 @@ GoodNotes auto-shapes are converted silently: they become ordinary strokes drawn
 shape (straight sides stay straight; ellipses are sampled), only their translucent fill is
 dropped, with a warning.  Every other lossy step adds one human-readable warning, shown in
 the web page, printed by the CLI and returned in the `X-GnNote-Warnings` header of the server.
+
+## Other apps
+
+Every supported app converts to every other one (`--to FORMAT`; without it, files of these
+apps become Notability notes). `gnnote formats` lists them.
+
+| Content | Xournal++ (`.xopp`, `.xoj`) |
+|---|---|
+| Handwriting | Read and written with **per-point widths** (Xournal++'s segment widths); Bezier ink is flattened to 1 pt polylines |
+| Highlighter | Kept (Xournal++ highlighter tool) |
+| Shape fills | Kept (`fill` attribute of the outline stroke) |
+| Images | PNG / JPEG kept; PDF stickers become LaTeX-style PDF images; rotations need Xournal++ newer than 1.3.8 |
+| Text boxes | Kept with font, size, colour, alignment; box sizes estimated on read |
+| PDF backgrounds | Read from the ZIP-packaged `.xopp`; a gzip `.xopp` only references its PDF (plain paper, warning). Written into a ZIP-packaged `.xopp` (Xournal++ 1.2 and later); one PDF per document |
+| Paper | plain / ruled / graph / dotted styles both ways; other colours as generated paper |
+| Dropped (warning) | layers (merged), eraser strokes, audio, links (text kept), LaTeX source, dash styles |
+
+Facts, mapping and what is still unverified in each app: `docs/xournalpp.md`.
 
 ## Verification status
 
@@ -73,6 +94,7 @@ python3 -m gnnote convert Note.note -o out/ --title "Maths"   # writes out/Note.
 python3 -m gnnote convert Notebook.goodnotes --paper pdf --no-pressure --simplify 0.3
 python3 -m gnnote info Note.note [--json]                     # format, title, pages, counts, warnings
 python3 -m gnnote batch ~/Notes -o ~/Converted --to notability
+python3 -m gnnote convert Lecture.xopp --to goodnotes             # any supported app to any other
 ```
 
 Exit codes: 0 success, 1 a file could not be read or converted, 2 usage error. Warnings go
@@ -156,6 +178,7 @@ test with Chromium, once per pull-request change and on pushes to `main`; `pages
   what the 2026 GoodNotes builds (container schema 25/35) changed in page binding, strokes and elements.
 * `docs/notability-format.md`: the `.note` package and its `Session.plist` object graph.
 * `docs/ecosystem.md`: import/export capabilities of both apps, existing tools, licensing.
+* `docs/xournalpp.md`: the Xournal++ `.xopp` / `.xoj` codec.
 * `tests/e2e/README.md`: the browser end-to-end test.
 
 ## Acknowledgements

@@ -14,6 +14,12 @@ implementation written from the byte-level research notes in `docs/`.
   is furnished to do so, subject to the following conditions: The above copyright notice and
   this permission notice shall be included in all copies or substantial portions of the
   Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND."
+  The open-format codecs adapt further parts of inkterop under the same notice: the shape of
+  the Xournal++ output in `gnnote/xournalpp/writer.py` follows inkterop's xopp writer
+  (`core/src/inkterop/formats/xopp/`).
+* **Xournal++** (https://github.com/xournalpp/xournalpp, GPL-2.0) was consulted for format
+  facts only (its loader, saver and test files); no code was copied. Its test files are fetched
+  by the test suite as external test data and are not part of this repository.
 * `gnnote/applelz4.py` shares its module name and the names of its public helpers with the
   corresponding module of goodparse (the names follow Apple's `libcompression` terminology);
   its implementation was written from `docs/ecosystem.md` section 3 and the LZ4 block format
