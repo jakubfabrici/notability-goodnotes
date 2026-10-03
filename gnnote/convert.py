@@ -24,6 +24,7 @@ NOTABILITY = "notability"
 
 EXTENSIONS: Dict[str, str] = {f.id: f.extension for f in _formats.FORMATS.values()}
 PAPER_MODES = ("plain", "pdf")
+PDF_INK_MODES = ("flatten", "annotations")
 
 __all__ = ["Options", "ConvertResult", "detect_format", "to_document", "convert",
            "document_stats", "other_format", "GOODNOTES", "NOTABILITY", "EXTENSIONS"]
@@ -44,6 +45,8 @@ class Options:
     ``notability_page_width``: ``pageWidthInDocumentCoordsKey`` written into ``.note`` files.
     ``target``: id of the output format (see :mod:`gnnote.formats`); ``None`` picks the
     default target for the source format.
+    ``pdf_ink``: how the PDF writer stores ink: ``"flatten"`` draws it into the pages,
+    ``"annotations"`` writes one ``/Ink`` annotation per stroke (editable in PDF apps).
     """
 
     paper: str = "plain"
@@ -53,6 +56,7 @@ class Options:
     title: Optional[str] = None
     notability_page_width: float = 574.0
     target: Optional[str] = None
+    pdf_ink: str = "flatten"
 
     def validate(self) -> None:
         """Raise :class:`ValueError` for values the writers would not understand."""
@@ -66,6 +70,8 @@ class Options:
             raise ValueError("simplify must be >= 0")
         if self.notability_page_width <= 0:
             raise ValueError("notability_page_width must be positive")
+        if self.pdf_ink not in PDF_INK_MODES:
+            raise ValueError(f"pdf_ink must be one of {', '.join(PDF_INK_MODES)}; got {self.pdf_ink!r}")
 
 
 @dataclass

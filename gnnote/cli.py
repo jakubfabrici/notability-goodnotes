@@ -3,14 +3,17 @@
 Sub-commands::
 
     gnnote convert IN [-o OUT] [--to FORMAT] [--paper plain|pdf] [--no-pressure]
-                   [--simplify PT] [--ribbon] [--title T]
+                   [--simplify PT] [--ribbon] [--title T] [--pdf-ink flatten|annotations]
     gnnote info FILE [--json]
     gnnote batch DIR [-o OUTDIR] [--to FORMAT] [--paper plain|pdf] [--no-pressure]
-                 [--simplify PT]
+                 [--simplify PT] [--pdf-ink flatten|annotations] [--include-pdf]
     gnnote formats
 
-FORMAT is a format id from ``gnnote formats`` (``goodnotes``, ``notability``, ...).  Without
-``--to`` GoodNotes and Notability files swap and other apps' files become Notability notes.
+FORMAT is a format id from ``gnnote formats`` (``goodnotes``, ``notability``, ``pdf``).
+Without ``--to`` GoodNotes and Notability files swap and other apps' files (and PDFs) become
+Notability notes.  ``batch`` converts PDF files only with ``--include-pdf``: a notes folder
+usually holds the PDF exports of its notebooks too, and both would be written to the same
+output name.
 
 Exit codes: 0 success, 1 a conversion failed (or a file could not be read), 2 usage error.
 """
@@ -53,6 +56,9 @@ def _add_write_options(parser: argparse.ArgumentParser, ribbon: bool = True, tit
                         help="write constant-width Notability strokes instead of per-point widths")
     parser.add_argument("--simplify", type=float, default=0.0, metavar="PT",
                         help="simplify polylines with this tolerance in pt before fitting (default 0 = off)")
+    parser.add_argument("--pdf-ink", dest="pdf_ink", choices=("flatten", "annotations"), default="flatten",
+                        help="PDF output: 'flatten' draws the ink into the pages (default); 'annotations' "
+                             "writes it as ink annotations that PDF apps can edit")
     if ribbon:
         parser.add_argument("--ribbon", action="store_true",
                             help="experimental: per-point-width GoodNotes strokes (falls back to flat)")
@@ -83,6 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_batch.add_argument("-o", "--output", metavar="OUTDIR", default=None,
                          help="directory for the converted files (default: DIR)")
     _add_write_options(p_batch, ribbon=False, title=False)
+    p_batch.add_argument("--include-pdf", dest="include_pdf", action="store_true",
+                         help="also convert .pdf files (off by default: PDF exports usually sit next to "
+                              "the notebooks they were exported from)")
 
     sub.add_parser("formats", help="list the supported apps and what can be read and written")
     return parser
@@ -91,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _options_from_args(args: argparse.Namespace) -> Options:
     return Options(paper=args.paper, pressure=args.pressure, simplify=args.simplify,
                    ribbon=bool(getattr(args, "ribbon", False)), title=getattr(args, "title", None),
-                   target=getattr(args, "target", None))
+                   target=getattr(args, "target", None), pdf_ink=getattr(args, "pdf_ink", "flatten"))
 
 
 def _output_path(source: Path, filename: str, output: Optional[str]) -> Path:
@@ -219,8 +228,11 @@ def _cmd_batch(args: argparse.Namespace, out: Any, err: Any) -> int:
         print(f"error: {directory} is not a directory", file=err)
         return 1
     out_dir = Path(args.output) if args.output else directory
-    # every readable app's files, except files already in the requested target format
-    wanted = {ext for f in _formats.readable() if f.id != args.target for ext in f.input_extensions}
+    # every readable app's files, except files already in the requested target format; PDFs
+    # only on request (see the module docstring)
+    wanted = {ext for f in _formats.readable()
+              if f.id != args.target and (f.id != "pdf" or getattr(args, "include_pdf", False))
+              for ext in f.input_extensions}
     files = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in wanted)
     if not files:
         print(f"no {' or '.join(sorted(wanted))} files in {directory}", file=out)

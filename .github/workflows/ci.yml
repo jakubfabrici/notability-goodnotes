@@ -63,8 +63,10 @@ jobs:
                   print("skipped:", name, exc)
           EOF
 
-      - name: Install oracle parser dependencies (parser-for-goodnotes needs numpy)
-        run: python -m pip install numpy || echo "numpy unavailable; oracle tests will skip"
+      - name: Install oracle dependencies (parser-for-goodnotes needs numpy; the PDF tests check output with PyMuPDF)
+        run: |
+          python -m pip install numpy || echo "numpy unavailable; oracle tests will skip"
+          python -m pip install pymupdf || echo "PyMuPDF unavailable; PDF oracle tests will skip"
 
       - name: Run tests
         env:

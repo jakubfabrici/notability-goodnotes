@@ -25,3 +25,15 @@ implementation written from the byte-level research notes in `docs/`.
   into the `gnnote` package.
 * Other reference material (notability-to-svg, GPL-3.0; inkref and jojo-notes, no licence)
   informed the documented file-format facts only; no code was copied.
+* `gnnote/pdf/fonts/DejaVuSans-subset.ttf` is a subset of **DejaVu Sans** 2.37
+  (https://dejavu-fonts.github.io/), made with `tools/make_font_subset.py` (glyphs of the
+  listed Unicode blocks kept, hinting and layout tables removed, names unchanged). DejaVu
+  fonts are (c) 2003 Bitstream, Inc. (Bitstream Vera), with glyphs (c) 2006 Tavmjong Bah
+  (Arev fonts); DejaVu changes are in the public domain. They are distributed under the
+  Bitstream Vera Fonts licence and the Arev Fonts licence, whose full text (copyright notices
+  and permission notices, as those licences require) ships next to the font as
+  `gnnote/pdf/fonts/LICENSE-DejaVu.txt`. PDFs written by gnnote embed a further subset of
+  this font when their text needs it.
+* The advance widths of the base-14 font Helvetica in `gnnote/pdf/text.py` are the standard
+  Helvetica font metrics (Adobe Core14 AFM values, also used by every PDF library); no font
+  program is included for Helvetica.

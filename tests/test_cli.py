@@ -82,7 +82,7 @@ def test_usage_errors_exit_two(capsys: pytest.CaptureFixture[str]) -> None:
     assert "usage" in capsys.readouterr().err
     assert main(["convert"]) == 2
     assert main(["convert", "x.note", "--paper", "lined"]) == 2
-    assert main(["batch", "d", "--to", "pdf"]) == 2
+    assert main(["batch", "d", "--to", "keynote"]) == 2
     assert main(["frobnicate"]) == 2
     assert main(["--help"]) == 0
     assert main(["--version"]) == 0

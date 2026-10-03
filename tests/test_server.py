@@ -262,8 +262,9 @@ def test_gnnote_zip_built_from_package(running: Tuple[str, int]) -> None:
         assert "gnnote/__init__.py" in names
         assert "gnnote/server.py" in names
         assert "gnnote/model.py" in names
-        assert all(n.startswith("gnnote/") and n.endswith(".py") for n in names)
-        assert not any("__pycache__" in n for n in names)
+        assert all(n.startswith("gnnote/") for n in names)
+        assert "gnnote/pdf/fonts/DejaVuSans-subset.ttf" in names  # package data travels too
+        assert not any("__pycache__" in n or n.endswith((".pyc", ".pyo")) for n in names)
         assert f'__version__ = "{__version__}"' in zf.read("gnnote/__init__.py").decode("utf-8")
     # cached: identical bytes the second time
     status2, _, body2 = _request(running, "GET", "/gnnote.zip")

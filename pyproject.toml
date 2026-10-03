@@ -39,6 +39,10 @@ Source = "https://github.com/jakubfabrici/notability-goodnotes"
 [tool.setuptools]
 include-package-data = false
 
+[tool.setuptools.package-data]
+# the PDF writer's embedded font (DejaVu subset and its licence)
+"gnnote.pdf" = ["fonts/*"]
+
 [tool.setuptools.dynamic]
 version = { attr = "gnnote.__version__" }
 

@@ -6,7 +6,9 @@ as native ink, not as a flattened PDF or image.
 
 Neither app imports the other's format, and both export only PDF or images for exchange.
 gnnote reads the real container formats (documented in `docs/`) and writes files the other
-app opens as its own.
+app opens as its own. It also writes **PDF** (ink flattened into the pages, or kept as
+editable ink annotations) and reads PDF: the pages become PDF-backed pages and the PDF's ink,
+shape, highlight and text annotations become editable ink and text boxes.
 
 * Pure Python 3.11+, standard library only, MIT licence, clean-room implementation.
 * Runs as a web page in the browser (Pyodide, nothing is uploaded anywhere), as a command-line
@@ -29,6 +31,21 @@ app opens as its own.
 GoodNotes notebooks written by GoodNotes 5 and 6 up to the 2026 builds (container schema 24,
 25 and 35) and Notability notes from version 4 to 16 are read.
 
+### PDF
+
+| Content | Note to PDF (`--to pdf`) | PDF to note (`gnnote convert file.pdf`) |
+|---|---|---|
+| Pages | One PDF page per page, same size | One PDF-backed page per PDF page (rotated pages as displayed) |
+| Handwriting | `--pdf-ink flatten` (default): drawn into the page, per-point widths kept; `--pdf-ink annotations`: one ink annotation per stroke, editable in PDF apps, drawn exactly like the flattened ink | Ink, line, polyline, polygon, square and circle annotations become editable strokes (GoodNotes' shapes keep their exact curves); ink drawn *into* the page content stays part of the background |
+| Highlighter | Translucent, multiplied over the page | Highlight annotations and translucent / multiply ink become highlighter strokes |
+| Images | JPEG unchanged, PNG with transparency, PDF stickers as vectors; photos upright | Stay part of the PDF page |
+| Text boxes | Real text (searchable): Helvetica, or an embedded DejaVu Sans subset for Slovak, Czech, Ukrainian, Greek, ...; bold, italic, underline, alignment, rotation | Free-text annotations become text boxes |
+| Backgrounds | User PDFs and paper templates imported as vector pages (rotation and crop origin honoured) | -- |
+| Other annotations | -- | Links, stamps, notes and form fields stay in the PDF; the converted annotations are removed from it by an incremental update |
+
+Encrypted PDFs are carried as they are, with their annotations left in the pages. Details:
+`docs/pdf.md`.
+
 Dropped, with a warning in the output: audio recordings, stickers / sticky notes, stroke
 dash patterns (drawn solid), Notability vector shapes, math objects, image crops and flips.
 GoodNotes auto-shapes are converted silently: they become ordinary strokes drawn along the
@@ -40,7 +57,8 @@ the web page, printed by the CLI and returned in the `X-GnNote-Warnings` header 
 
 GoodNotes -> Notability ink import confirmed on the author's iPad with a one-page test;
 everything else is validated against third-party parsers and sample files only, not on
-devices.
+devices. PDF output and input are checked with MuPDF (PyMuPDF, as a test oracle: renders,
+text extraction, no warnings) and against GoodNotes' own PDF exports of the sample notebooks.
 
 ## Quick start
 
@@ -73,6 +91,9 @@ python3 -m gnnote convert Note.note -o out/ --title "Maths"   # writes out/Note.
 python3 -m gnnote convert Notebook.goodnotes --paper pdf --no-pressure --simplify 0.3
 python3 -m gnnote info Note.note [--json]                     # format, title, pages, counts, warnings
 python3 -m gnnote batch ~/Notes -o ~/Converted --to notability
+python3 -m gnnote convert Notebook.goodnotes --to pdf --pdf-ink annotations   # editable ink in PDF apps
+python3 -m gnnote convert Annotated.pdf                       # Annotated.note with the PDF's ink editable
+python3 -m gnnote batch ~/PDFs --include-pdf --to goodnotes   # batch skips .pdf files unless asked
 ```
 
 Exit codes: 0 success, 1 a file could not be read or converted, 2 usage error. Warnings go
@@ -96,7 +117,7 @@ curl -F file=@Notebook.goodnotes "http://127.0.0.1:8000/api/convert?paper=plain"
 ```
 
 `GET /api/health` answers `{"ok": true, "version": ..., "maxUpload": bytes}`; `POST /api/convert` takes a multipart `file` (up to
-300 MB; larger uploads are refused by the page before uploading) plus `paper`, `pressure`, `simplify` and `title` as query or form parameters and
+300 MB; larger uploads are refused by the page before uploading) plus `to`, `paper`, `pressure`, `simplify`, `pdf_ink` and `title` as query or form parameters and
 returns the converted file with `X-GnNote-Warnings` and `X-GnNote-Stats` JSON headers. The
 web page uses the server automatically when it is served by `gnnote.server`, and Pyodide
 otherwise.
@@ -117,6 +138,10 @@ docker compose up -d        # builds the image (vendored Pyodide) and serves por
 | `--simplify PT` | `simplify=PT` | Simplify polylines with this tolerance (points) before Bezier fitting; 0 = off. |
 | `--title T` | `title=T` (API only; the web page has no title field) | Name of the output note / notebook (default: the source title). |
 | `--ribbon` | | Experimental variable-width GoodNotes strokes; currently falls back to flat strokes with a warning. |
+| `--to FORMAT` | `to=FORMAT` | Output format: `goodnotes`, `notability` or `pdf` (default: GoodNotes and Notability swap, PDFs become Notability notes). |
+| `--pdf-ink flatten` (default) | `pdf_ink=flatten` | PDF output: ink drawn into the pages (looks the same in every viewer). |
+| `--pdf-ink annotations` | `pdf_ink=annotations` | PDF output: every stroke an ink annotation (movable / erasable in PDF apps; drawn identically). |
+| `--include-pdf` (`batch` only) | | Also convert the `.pdf` files of the folder (off by default: PDF exports usually sit next to their notebooks and would map to the same output name). |
 
 ## Development
 
@@ -155,6 +180,7 @@ test with Chromium, once per pull-request change and on pushes to `main`; `pages
 * `docs/goodnotes-v35-binding.md`, `docs/goodnotes-v35-strokes.md`, `docs/goodnotes-v35-elements.md`:
   what the 2026 GoodNotes builds (container schema 25/35) changed in page binding, strokes and elements.
 * `docs/notability-format.md`: the `.note` package and its `Session.plist` object graph.
+* `docs/pdf.md`: what the PDF writer produces and what the PDF reader converts, byte by byte.
 * `docs/ecosystem.md`: import/export capabilities of both apps, existing tools, licensing.
 * `tests/e2e/README.md`: the browser end-to-end test.
 

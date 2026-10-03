@@ -22,5 +22,16 @@ export const FORMATS = [
     "readable": true,
     "writable": true,
     "defaultTarget": "goodnotes"
+  },
+  {
+    "id": "pdf",
+    "name": "PDF",
+    "extension": ".pdf",
+    "inputExtensions": [
+      ".pdf"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
   }
 ];

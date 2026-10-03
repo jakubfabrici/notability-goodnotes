@@ -173,13 +173,13 @@ def test_detect_format_by_content_and_extension() -> None:
 def test_other_format_and_output_filename() -> None:
     assert other_format(GOODNOTES) == NOTABILITY and other_format(NOTABILITY) == GOODNOTES
     with pytest.raises(ValueError):
-        other_format("pdf")
+        other_format("keynote")
     assert output_filename("dir/Mathe 1.goodnotes", NOTABILITY) == "Mathe 1.note"
     assert output_filename("x.note", GOODNOTES) == "x.goodnotes"
     assert output_filename("archive.zip", NOTABILITY) == "archive.note"
     assert output_filename(".note", GOODNOTES) == ".note.goodnotes"
     assert output_filename("", NOTABILITY) == "converted.note"
-    assert EXTENSIONS == {GOODNOTES: ".goodnotes", NOTABILITY: ".note"}
+    assert EXTENSIONS == {GOODNOTES: ".goodnotes", NOTABILITY: ".note", "pdf": ".pdf"}
 
 
 def test_options_validation() -> None:

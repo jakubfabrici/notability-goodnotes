@@ -80,6 +80,13 @@ def _sniff_notability(data: bytes, names: Optional[List[str]]) -> bool:
     return bool(names) and any(n == "Session.plist" or n.endswith("/Session.plist") for n in names)
 
 
+def _sniff_pdf(data: bytes, names: Optional[List[str]]) -> bool:
+    # ``%PDF`` within the first 1024 bytes (readers tolerate junk before the header).  A ZIP
+    # archive -- readable or damaged (``PK`` signature) -- is never a PDF, even when its
+    # first stored member is one: a broken notebook must still reach its own reader.
+    return names is None and not data.startswith(b"PK") and b"%PDF" in data[:1024]
+
+
 FORMATS: Dict[str, NoteFormat] = {
     f.id: f
     for f in (
@@ -95,11 +102,17 @@ FORMATS: Dict[str, NoteFormat] = {
             reader="gnnote.notability.reader:read_note",
             writer="gnnote.notability.writer:write_note",
         ),
+        NoteFormat(
+            id="pdf", name="PDF", extension=".pdf",
+            input_extensions=(".pdf",), sniff=_sniff_pdf,
+            reader="gnnote.pdf.reader:read_pdf",
+            writer="gnnote.pdf.writer:write_pdf",
+        ),
     )
 }
 
 # Where a file goes when the caller names no target: the two original formats swap, every
-# other app converts to Notability (the app this project was started for).
+# other app (and PDF) converts to Notability (the app this project was started for).
 _DEFAULT_TARGETS = {"goodnotes": "notability", "notability": "goodnotes"}
 _FALLBACK_TARGET = "notability"
 

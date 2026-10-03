@@ -428,3 +428,84 @@ event synthesis, inkref's confirmed stroke encoding):
 | 5 | Shared multi-page PDF attachments in GoodNotes output | Matches the format's design (`#2.#5` page index); splitting needs a PDF page extractor |
 | 6 | Notability plain page = 612 × 803.25 pt | Notability's own PDF export size; keeps 1.3125 ratio |
 | 7 | Browser-first (Pyodide) with optional server | Runs on the iPad itself; no hosting needed; server only for speed on a homelab |
+
+## 9. PDF (`gnnote/pdf/`)
+
+PDF is a third registered format (`formats.py` id `pdf`, `.pdf`, sniffed by `%PDF` in the
+first 1024 bytes of a non-ZIP file; default target Notability). Byte-level facts and every
+rule are in `docs/pdf.md`; this section is the contract.
+
+```
+gnnote/pdf/
+  objects.py   PdfFile(_Document): pages() with object refs and inherited MediaBox (4 corners),
+               CropBox, Rotate, Resources -- the same walk and fallbacks as pdfutil.pdf_info;
+               serialize(), PdfWriter, Copier (renumbering object-graph copy, iterative),
+               incremental_update(pdf, {ref: obj}), rewrite(pdf, {page_index: dict})
+  writer.py    write_pdf(doc: Document, options: Options | None = None) -> bytes
+  reader.py    read_pdf(data: bytes) -> Document
+  images.py    jpeg_image / png_image -> PdfImage (XObject dict + data [+ soft mask]);
+               decode_png (reference decoder); jpeg_info (size, components, EXIF orientation)
+  text.py      choose_font(texts) -> Helvetica | EmbeddedFont; layout(box, font); text_box_ops
+  ttf.py       TrueTypeFont (cmap 4/12, hmtx, metrics, glyph subset); default_font()
+  fonts/       DejaVuSans-subset.ttf (tools/make_font_subset.py, fontTools at dev time only)
+```
+
+`Options.pdf_ink: str = "flatten"` (`"flatten"` | `"annotations"`, validated); CLI
+`--pdf-ink` on `convert` and `batch`, `batch --include-pdf` (PDF inputs are opt-in for batch);
+server parameter `pdf_ink`.
+
+### 9.1 Model -> PDF (`writer.py`)
+
+* PDF 1.7, classic xref, deterministic bytes (`/ID` = MD5 of the bodies), `/Info` = `/Title`
+  (UTF-16BE + BOM when not ASCII) and `/Producer (gnnote <version>)`; one Flate content stream
+  per page; `/MediaBox [0 0 w h]`; model points written as `(x, h - y)`.
+* Page content: background, images, text boxes, ink (`Page.strokes` order).
+* Backgrounds: the referenced PDF page (user PDFs and stock paper alike) as a Form XObject
+  (contents joined, resources and everything they reference copied once per source PDF,
+  visible annotations' appearances drawn on top) under the matrix MediaBox origin -> 0,
+  `/Rotate` applied, scaled to the model page. `paper` lined/grid/dotted without a background
+  imports `make_paper_pdf`. Encrypted / unreadable / missing PDFs: blank + warning.
+* Images: JPEG passthrough (`/DCTDecode`, Adobe CMYK `/Decode` inverted); PNG passthrough with
+  predictor 15 for grey/RGB/palette, filtered-row splitting into colour + `/SMask` for alpha,
+  full decode only for palette transparency, interlace and damaged data; PDF images as Form
+  XObjects. Rotation clockwise about the box centre; an EXIF JPEG whose orientation prescribes
+  the same quarter turn keeps its displayed box (raw pixels turned into it, upright).
+* Text: Helvetica/WinAnsi when all text is in cp1252, else the DejaVu subset as Type0 /
+  Identity-H with `/W` and `/ToUnicode` (missing glyphs -> `?`, one warning); greedy wrap with
+  real widths (12 % overflow tolerance, then condensed), baselines 0.952 / 1.1646 em, align,
+  bold = render mode 2 with an outline of size/30, italic = 12 degree skew, underline,
+  rotation about the top-left corner.
+* Ink, flatten: one path per constant-width stroke (`l` or `c`), variable width as runs of
+  pieces (<= 5 % width change) with round caps; highlighters `/BM /Multiply` + alpha (0.5 when
+  opaque); translucent variable-width strokes inside a transparency group; fills with `/ca`.
+  Annotations: `/Ink` per stroke with `/InkList`, `/BS /W` median, `/C`, `/CA`, `/F 4`, `/P`,
+  `/NM` and an `/AP /N` that draws exactly the flatten output (alpha baked in); fills stay in
+  the content.
+
+### 9.2 PDF -> model (`reader.py`)
+
+* One PDF-backed page per PDF page (displayed size; `pdf_id` = UUID of the input's SHA-1;
+  `template_is_builtin = False`); title `/Info /Title` or "PDF".
+* `/Ink`, `/Line`, `/PolyLine`, `/Polygon` (+`/IC` fill), `/Square`, `/Circle` (+ fill) ->
+  strokes; `/FreeText` -> `TextBox`; `/Highlight` -> one highlighter stroke per quad. Width
+  `/BS /W` / `/Border` / 1, colour `/C` (grey/RGB/CMYK, default black), alpha `/CA` or the
+  appearance's ExtGState, highlighter when alpha <= 0.6 or `/BM /Multiply`. Ink geometry
+  comes from the appearance when it strokes exactly the path `/InkList` describes (exact
+  Bezier handles); filled appearances give the width estimate.
+* Converted annotations and their popups are removed by an incremental update rewriting the
+  affected page dictionaries (xref table or stream like the file's newest section); damaged
+  cross-reference data -> full rewrite; the result is verified or the conversion is
+  abandoned. Encrypted files: untouched, nothing converted, warning.
+* `ValueError` only for "not a PDF" / "no page"; everything else is a warning.
+
+### 9.3 Decisions
+
+| # | Decision | Why |
+|---|----------|-----|
+| P1 | Reuse `pdfutil`'s tolerant parser for reading, subclass it for page refs | One parser; page *n* means the same page in `pdf_info`, the writer and the reader, damaged files included |
+| P2 | Highlight annotations become highlighter strokes, not fills | Both apps keep highlighter ink editable; Notability drops fills |
+| P3 | Alpha baked into the `/AP` of written ink annotations, `/CA` set as well | ISO 32000-1 table 170: with an appearance stream, `/CA` is not used -- MuPDF and others paint `/AP` as is |
+| P4 | Appearance geometry preferred over `/InkList` when they agree | GoodNotes' `/InkList` holds only the anchors of its shapes; round trips keep exact Bezier handles |
+| P5 | `batch` converts PDFs only with `--include-pdf` | PDF exports sit next to their notebooks; both would map to the same output name |
+| P6 | Helvetica for cp1252 text, else an embedded 155 KB DejaVu subset | No embedding in the common case; Slovak (carons) and Cyrillic still searchable and copyable |
+| P7 | No vectorisation of page content | Flattened ink cannot be told apart from the page reliably; it stays background |

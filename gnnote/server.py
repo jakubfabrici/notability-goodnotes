@@ -12,16 +12,16 @@ What the server speaks
   ``application/wasm``, ``.zip``, ``.json``, ``.html``, ``.css``, ``.svg`` ...) with
   ``mimetypes`` as a fallback.  Paths are resolved inside the root only; anything
   escaping it is a 404.  No COOP/COEP headers (Pyodide does not need SharedArrayBuffer).
-* ``GET /gnnote.zip`` -- a ZIP archive of the *installed* ``gnnote`` package (``.py``
-  files only, member names ``gnnote/...``) built on first request and cached in
-  memory; it is what the browser worker unpacks on ``sys.path``.
+* ``GET /gnnote.zip`` -- a ZIP archive of the *installed* ``gnnote`` package (modules and
+  data files such as the PDF font, no bytecode; member names ``gnnote/...``) built on first
+  request and cached in memory; it is what the browser worker unpacks on ``sys.path``.
 * ``GET /version.json`` -- served from disk when the build wrote one, else generated.
 * ``GET /api/health`` -> ``{"ok": true, "version": ..., "maxUpload": ..., "formats": [...]}``.
 * ``POST /api/convert`` -- ``multipart/form-data`` with a ``file`` part (the
-  ``.goodnotes``/``.note`` bytes, filename taken from the part) and optional parameters
+  ``.goodnotes``/``.note``/``.pdf`` bytes, filename taken from the part) and optional parameters
   ``to`` (target format id), ``paper`` (``plain``|``pdf``), ``pressure`` (bool),
-  ``simplify`` (float pt), ``title``
-  (string), given either as form fields or as query-string parameters (form fields
+  ``simplify`` (float pt), ``title`` (string), ``pdf_ink`` (``flatten``|``annotations``,
+  PDF output only), given either as form fields or as query-string parameters (form fields
   win).  Bodies above ``MAX_UPLOAD`` (300 MB) are refused with 413 before being read.
   On success the converted file is returned as ``application/octet-stream`` with
   ``Content-Disposition: attachment`` and the headers ``X-GnNote-Warnings`` (JSON list,
@@ -125,7 +125,8 @@ def default_root() -> Path:
 
 
 def build_package_zip() -> bytes:
-    """ZIP the installed ``gnnote`` package (``.py`` only) as ``gnnote/...`` members.
+    """ZIP the installed ``gnnote`` package (its modules and data files, such as the PDF
+    writer's font, without bytecode caches) as ``gnnote/...`` members.
 
     The result is cached for the lifetime of the process.
     """
@@ -135,8 +136,8 @@ def build_package_zip() -> bytes:
             return cached
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for path in sorted(_PACKAGE_DIR.rglob("*.py")):
-                if "__pycache__" in path.parts:
+            for path in sorted(_PACKAGE_DIR.rglob("*")):
+                if not path.is_file() or "__pycache__" in path.parts or path.suffix in (".pyc", ".pyo"):
                     continue
                 rel = path.relative_to(_PACKAGE_DIR).as_posix()
                 info = zipfile.ZipInfo("gnnote/" + rel, date_time=(1980, 1, 1, 0, 0, 0))
@@ -327,6 +328,11 @@ def build_options(params: Dict[str, str]) -> Dict[str, Any]:
     title = params.get("title", "").strip()
     if title:
         kwargs["title"] = title[:200]
+    pdf_ink = params.get("pdf_ink", "").strip().lower()
+    if pdf_ink:
+        if pdf_ink not in ("flatten", "annotations"):
+            raise ValueError("pdf_ink must be 'flatten' or 'annotations'")
+        kwargs["pdf_ink"] = pdf_ink
     target = (params.get("to") or params.get("target") or "").strip().lower()
     if target:
         from . import formats as _formats  # stdlib-only, cheap
