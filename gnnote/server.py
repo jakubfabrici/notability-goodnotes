@@ -338,7 +338,9 @@ def build_options(params: Dict[str, str]) -> Dict[str, Any]:
         from . import formats as _formats  # stdlib-only, cheap
         ids = [f.id for f in _formats.writable()]
         if target not in ids:
-            raise ValueError("to must be one of " + ", ".join(ids))
+            known = _formats.FORMATS.get(target)
+            prefix = f"{known.name} files can be read but not written; " if known is not None else ""
+            raise ValueError(prefix + "to must be one of " + ", ".join(ids))
         kwargs["target"] = target
     return kwargs
 

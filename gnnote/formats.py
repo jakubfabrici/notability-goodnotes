@@ -109,6 +109,33 @@ def _sniff_collanote(data: bytes, names: Optional[List[str]]) -> bool:
     return len(files) == 1 and files[0].lower().endswith(".cnote")
 
 
+def _sniff_nebo(data: bytes, names: Optional[List[str]]) -> bool:
+    """MyScript Notes / Nebo: ``rel.json`` plus BINK ink or BDOM layout parts."""
+    if not names or "rel.json" not in names:
+        return False
+    return any(n.startswith("pages/") and n.endswith(("/ink.bink", "/page.bdom")) for n in names) or \
+        "index.bdom" in names
+
+
+def _sniff_flexcil(data: bytes, names: Optional[List[str]]) -> bool:
+    """Flexcil: a ``.flx`` document (``info`` + ``pages.index``) or a ``.flex`` backup of them."""
+    if not names:
+        return False
+    if "pages.index" in names and "info" in names:
+        return True
+    return any(n.lower().endswith(".flx") or n == "documents.list" or n.endswith("/documents.list")
+               for n in names)
+
+
+def _sniff_remarkable(data: bytes, names: Optional[List[str]]) -> bool:
+    """reMarkable: a v6 page (``.rm`` header) or an ``.rmdoc`` (``<uuid>.content`` + metadata/pages)."""
+    if names is None:
+        return data.startswith(b"reMarkable .lines file, version=")
+    top = [n for n in names if "/" not in n]
+    return any(n.endswith(".content") for n in top) and (
+        any(n.endswith(".metadata") for n in top) or any(n.endswith(".rm") for n in names))
+
+
 def _sniff_pdf(data: bytes, names: Optional[List[str]]) -> bool:
     # ``%PDF`` within the first 1024 bytes (readers tolerate junk before the header).  A ZIP
     # archive -- readable or damaged (``PK`` signature) -- is never a PDF, even when its
@@ -142,6 +169,21 @@ FORMATS: Dict[str, NoteFormat] = {
             id="collanote", name="CollaNote", extension=".cnote",
             input_extensions=(".cnote",), sniff=_sniff_collanote,
             reader="gnnote.collanote.reader:read_cnote",
+        ),
+        NoteFormat(
+            id="nebo", name="MyScript Notes (Nebo)", extension=".nebo",
+            input_extensions=(".nebo",), sniff=_sniff_nebo,
+            reader="gnnote.nebo.reader:read_nebo",
+        ),
+        NoteFormat(
+            id="flexcil", name="Flexcil", extension=".flx",
+            input_extensions=(".flx", ".flex"), sniff=_sniff_flexcil,
+            reader="gnnote.flexcil.reader:read_flexcil",
+        ),
+        NoteFormat(
+            id="remarkable", name="reMarkable", extension=".rmdoc",
+            input_extensions=(".rmdoc", ".rm"), sniff=_sniff_remarkable,
+            reader="gnnote.remarkable.reader:read_remarkable",
         ),
         NoteFormat(
             id="pdf", name="PDF", extension=".pdf",

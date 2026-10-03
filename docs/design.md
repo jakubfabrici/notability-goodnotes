@@ -65,6 +65,12 @@ gnnote/
   pencilkit.py           Apple PencilKit PKDrawing -> neutral PKStroke list -> model strokes (app-neutral)
   collanote/__init__.py
   collanote/reader.py    read_cnote(data: bytes) -> Document   (CollaNote .cnote; read only, docs/collanote.md)
+  readutil.py            bounded ZIP / JSON helpers shared by the other apps' readers
+  nebo/bink.py           MyScript BINK ink -> strokes + tag table
+  nebo/reader.py         read_nebo(data: bytes) -> Document            (MyScript Notes / Nebo, read only)
+  flexcil/reader.py      read_flexcil(data: bytes, document=None) -> Document  (Flexcil .flx / .flex, read only)
+  remarkable/scene.py    reMarkable v6 scene: tagged blocks, CRDT order, lines, glyphs, text
+  remarkable/reader.py   read_remarkable(data: bytes) -> Document      (reMarkable .rmdoc / .rm, read only)
   formats.py             the format registry: id, name, extensions, content sniffer, reader / writer paths
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
@@ -118,7 +124,14 @@ gnnote.collanote.reader.read_cnote(data: bytes) -> Document          # no CollaN
 gnnote.pencilkit.parse_pkdrawing(data: bytes) -> PKDrawing            # version, inks, strokes, skipped counts
 gnnote.pencilkit.decode_pkdrawing(data: bytes) -> List[PKStroke]
 gnnote.pencilkit.to_model_stroke(stroke, scale=1.0, dx=0.0, dy=0.0) -> Optional[Stroke]
+gnnote.nebo.reader.read_nebo(data: bytes) -> Document                 # read only
+gnnote.flexcil.reader.read_flexcil(data: bytes, document=None) -> Document   # read only
+gnnote.flexcil.reader.list_flexcil_documents(data: bytes) -> List[FlexcilEntry]
+gnnote.remarkable.reader.read_remarkable(data: bytes) -> Document     # read only
 ```
+
+Every format is one entry of `gnnote/formats.py` (`FORMATS`): id, name, extensions, a content
+sniffer and the reader / writer paths (`None` for a read-only app).
 
 Primitives:
 
@@ -383,6 +396,20 @@ event synthesis, inkref's confirmed stroke encoding):
   non-CollaNote data raises `ValueError`. No writer (unverified import route and `Codable`
   strictness, see `collanote.md` §9).
 
+### 4.6 Other apps (read only)
+
+Readers of formats other apps write follow the same rules as the two original readers
+(tolerant, one warning per lossy step, `ValueError` only for "not a <format> file", bounded
+decompression through `readutil.ZipBundle`, at most 10 000 000 ink points per document).
+Their byte layouts, mappings and open questions are in their own notes:
+
+* MyScript Notes / Nebo `.nebo`: `docs/nebo.md` (BINK ink with pen classes, colours and the
+  pressure width law; the BDOM layout data is not decoded).
+* Flexcil `.flx` / `.flex`: `docs/flexcil.md` (width-normalised ink, shapes as strokes, PDF
+  backgrounds, text boxes, images; one document per backup).
+* reMarkable `.rmdoc` / `.rm`: `docs/remarkable.md` (v6 scenes ported from rmscene, stored
+  rendered widths, 226-dpi pages or PDF pages, highlights, approximate typed-text anchors).
+
 ## 5. Web UI (`web/`)
 
 * Static, no build step for development: `index.html` + `app.js` (main thread) + `worker.js`
@@ -442,9 +469,11 @@ event synthesis, inkref's confirmed stroke encoding):
 * `tests/conftest.py`: fixture `samples` → directory with the reference repositories
   (`franzthiemann/goodparse`, `Kaih1825/parser-for-goodnotes`, `HuyNguyenAu/notability-to-svg`,
   `xrayshan/notability-reader`, `jvns/svg2notability`, `samuelsadok/notesconverter`,
-  `nokcha0/Notability-notes-converter`, `cable729/inkterop`, `miroreo/denotability`, and the
-  CollaNote / PencilKit samples `enisogdum/YTU-Archive` (sparse checkout) and `r987r/Flashcard`),
-  taken from `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
+  `nokcha0/Notability-notes-converter`, `cable729/inkterop`, `miroreo/denotability`, the
+  CollaNote / PencilKit samples `enisogdum/YTU-Archive` (sparse checkout) and `r987r/Flashcard`,
+  and for the other apps `janptn/flexcil-backup-viewer`, `jeonghyeon-net/flexcil-codex-plugin`,
+  `ricklupton/rmscene`, `ricklupton/rmc` and `szainababbas/RM-Sticker-Press`), taken from
+  `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
   `tests/.samples/` (skipped when offline). Large single files (`LARGE_FILES`: a 100 MB CollaNote
   notebook) are used when present and downloaded only with `GNNOTE_LARGE_SAMPLES=1` (SHA-256
   pinned; CI skips them). Oracle parsers run **in a subprocess** with their

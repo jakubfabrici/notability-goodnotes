@@ -68,9 +68,22 @@ def read_input(source: Path) -> bytes:
     return buf.getvalue()
 
 
+def _target(value: str) -> str:
+    """``--to`` value: a writable format id; read-only and unknown ids get a specific message."""
+    wanted = value.strip().lower()
+    targets = [f.id for f in _formats.writable()]
+    if wanted in targets:
+        return wanted
+    choices = ", ".join(targets)
+    fmt = _formats.FORMATS.get(wanted)
+    if fmt is not None:
+        raise argparse.ArgumentTypeError(f"{fmt.name} files can be read but not written; choose from {choices}")
+    raise argparse.ArgumentTypeError(f"unknown format {value!r}; choose from {choices}")
+
+
 def _add_write_options(parser: argparse.ArgumentParser, ribbon: bool = True, title: bool = True) -> None:
     targets = [f.id for f in _formats.writable()]
-    parser.add_argument("--to", dest="target", choices=targets, default=None, metavar="FORMAT",
+    parser.add_argument("--to", dest="target", type=_target, default=None, metavar="FORMAT",
                         help="output format: " + ", ".join(targets) + " (default: GoodNotes and Notability "
                              "swap, other apps go to Notability)")
     parser.add_argument("--paper", choices=("plain", "pdf"), default="plain",
@@ -283,10 +296,13 @@ def _cmd_batch(args: argparse.Namespace, out: Any, err: Any) -> int:
 
 
 def _cmd_formats(args: argparse.Namespace, out: Any, err: Any) -> int:
+    rows = []
     for f in _formats.FORMATS.values():
         modes = "read and write" if f.readable and f.writable else ("read only" if f.readable else "write only")
-        exts = ", ".join(f.input_extensions)
-        print(f"{f.id:<12} {f.name:<12} {exts:<14} {modes}", file=out)
+        rows.append((f.id, f.name, ", ".join(f.input_extensions), modes))
+    widths = [max(12, *(len(row[i]) for row in rows)) for i in range(3)]
+    for row in rows:
+        print(f"{row[0]:<{widths[0]}} {row[1]:<{widths[1]}} {row[2]:<{widths[2]}} {row[3]}", file=out)
     return 0
 
 

@@ -81,3 +81,38 @@ implementation written from the byte-level research notes in `docs/`.
 * The advance widths of the base-14 font Helvetica in `gnnote/pdf/text.py` are the standard
   Helvetica font metrics (Adobe Core14 AFM values, also used by every PDF library); no font
   program is included for Helvetica.
+
+## Readers of other apps' formats
+
+* **MyScript Notes / Nebo** (`gnnote/nebo/`, `docs/nebo.md`): the BINK byte layout, the tag
+  table and the pressure width law are those documented by inkterop
+  (`docs/formats/nebo.md`, CC BY 4.0, Copyright (c) 2026 Caleb (cable729),
+  https://github.com/cable729/inkterop); `docs/nebo.md` restates and extends those facts
+  in its own words, and the decoder was written from them (no inkterop code is included).
+  inkterop's MIT reader runs only as a separate-process test oracle. Further facts come from
+  **notein-export** (https://github.com/davidnoronha1/notein-export, MIT, Copyright (c) 2026
+  davidnoronha1) and **nebo-ocr** (https://github.com/tkgo11/nebo-ocr, MIT, Copyright (c)
+  2025 nebo-ocr contributors). Facts about Kobo notebooks come from **kollate**
+  (https://github.com/andrew-lawlor/kollate, GPL-3.0) and **KoboNotebookPlus**
+  (https://github.com/MRoiban/KoboNotebookPlus, no licence); no code from either was used.
+* **Flexcil** (`gnnote/flexcil/`, `docs/flexcil.md`): the container layout, the point
+  encoding, the text-frame convention and the shape types are facts documented or implemented
+  by **flexcil-codex-plugin** (https://github.com/jeonghyeon-net/flexcil-codex-plugin, MIT,
+  Copyright (c) 2026 Flexcil Codex Plugin contributors), **flexcil-backup-viewer**
+  (https://github.com/janptn/flexcil-backup-viewer, MIT, Copyright (c) 2026 Jan Pultin) and
+  **FWebViewer** (https://github.com/c0lbarator/FWebViewer, MIT, Copyright (c) 2025 Zaripov
+  Bulat). The reader was written from those facts and the sample file; no code was copied.
+  flexcil-codex-plugin's codec runs only as a separate-process test oracle.
+* **reMarkable** (`gnnote/remarkable/`, `docs/remarkable.md`): `gnnote/remarkable/scene.py`
+  is a standard-library re-implementation of the part of **rmscene**'s v6 block reader that
+  gnnote needs (block and tag layout, CRDT ids and sequences, lines, glyph ranges, root text,
+  scene info), adapted from rmscene (https://github.com/ricklupton/rmscene, MIT License,
+  Copyright (c) 2023 Rick Lupton). The palette and the line heights of typed text come from
+  **rmc** (https://github.com/ricklupton/rmc, MIT License, Copyright (c) 2023 Rick Lupton).
+  The MIT permission notice quoted for inkterop above applies to these adapted parts in the
+  same way. The stored-width rule and the Paper Pro geometry are facts from inkterop's
+  `docs/formats/remarkable.md` (CC BY 4.0). The `.rmdoc` member layout, `redir` and the
+  226-dpi PDF mapping are facts from **RM-Sticker-Press**
+  (https://github.com/szainababbas/RM-Sticker-Press, GPL-3.0); no code from it was used, and
+  its sample files are only read by the tests from its own checkout. rmscene runs only as a
+  separate-process test oracle.

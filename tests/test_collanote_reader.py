@@ -405,7 +405,7 @@ def test_cli_lists_converts_and_describes_collanote(tmp_path: Path, capsys: pyte
     assert (tmp_path / "Lecture.note").is_file()
     capsys.readouterr()
     assert main(["convert", str(src), "--to", "collanote"]) == 2
-    assert "invalid choice: 'collanote'" in capsys.readouterr().err
+    assert "CollaNote files can be read but not written" in capsys.readouterr().err
     assert main(["info", str(src), "--json"]) == 0
     info = json.loads(capsys.readouterr().out)
     assert info["format"] == "collanote" and info["title"] == "Lecture" and info["totals"]["strokes"] == 1

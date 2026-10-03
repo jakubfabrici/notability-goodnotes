@@ -68,12 +68,30 @@ REPOS: Dict[str, Tuple[str, str]] = {
     # written on iOS (lasso transforms, deleted strokes, one version-2 drawing).
     "Flashcard": ("https://github.com/r987r/Flashcard",
                   "f74f6e8df09265f5a0f3cd2def49a5d9353bd40d"),
+    # Flexcil: forms.flx (MIT repository); only the top-level files are needed
+    "flexcil-backup-viewer": ("https://github.com/janptn/flexcil-backup-viewer",
+                              "8b1c30f432a34ef315ef669cf5eb87a589ae6394"),
+    # Flexcil: an MIT Python codec, run in a subprocess as a test oracle
+    "flexcil-codex-plugin": ("https://github.com/jeonghyeon-net/flexcil-codex-plugin",
+                             "b04abb543d72031e2c1be2ef7c7fc5bd52585c30"),
+    # reMarkable: rmscene (MIT) is the v6 oracle (subprocess) and holds sample pages; rmc (MIT)
+    # holds more pages; RM-Sticker-Press (GPL-3.0) is used only for its .rmdoc sample files,
+    # read as external test data (never copied into this repository)
+    "rmscene": ("https://github.com/ricklupton/rmscene", "d7d86ca3a8ca4965d911886a1660bc8acf654c1a"),
+    "rmc": ("https://github.com/ricklupton/rmc", "da87813a31496d156ca6ea8a27bf5128670fb45a"),
+    "RM-Sticker-Press": ("https://github.com/szainababbas/RM-Sticker-Press",
+                         "4ecc7387a07ca384e62cfefd1d670a548cea5314"),
 }
 
 # Repositories too large to check out whole: only these directories are checked out (a
 # partial clone without blobs plus a cone-mode sparse checkout, so only their files are
 # downloaded).  Repositories not listed here are checked out completely.
 SPARSE: Dict[str, Tuple[str, ...]] = {
+    "flexcil-backup-viewer": ("puplic",),  # cone mode adds the top-level files, forms.flx among them
+    "flexcil-codex-plugin": ("plugins/flexcil-codex-plugin/src",),
+    "rmscene": ("src", "tests/data"),
+    "rmc": ("tests/rm",),
+    "RM-Sticker-Press": ("RM-sticker-press/samples",),
     "YTU-Archive": ("1-2/Semiconductor/slide",),  # 63 MB of a much larger repository
 }
 
@@ -267,6 +285,40 @@ class SampleSet:
                 pass
         if not files:
             pytest.skip("no .note sample files available")
+        return files
+
+    def nebo_files(self) -> List[Path]:
+        """MyScript Notes / Nebo packages: inkterop's CC0 fixtures."""
+        files = sorted((self.repo("inkterop") / "core" / "tests" / "fixtures" / "nebo").glob("*.nebo"))
+        if not files:
+            pytest.skip("no .nebo sample files available")
+        return files
+
+    def flexcil_files(self) -> List[Path]:
+        """Flexcil documents: forms.flx of flexcil-backup-viewer."""
+        files = sorted(p for p in self.repo("flexcil-backup-viewer").glob("*.flx") if p.is_file())
+        if not files:
+            pytest.skip("no .flx sample files available")
+        return files
+
+    def remarkable_pages(self) -> List[Path]:
+        """reMarkable v6 pages: rmscene's and rmc's test pages and inkterop's CC0 captures."""
+        files: List[Path] = []
+        for name, sub in (("rmscene", "tests/data"), ("rmc", "tests/rm"),
+                          ("inkterop", "core/tests/fixtures/remarkable")):
+            try:
+                files += sorted((self.repo(name) / sub).glob("*.rm"))
+            except pytest.skip.Exception:
+                pass
+        if not files:
+            pytest.skip("no .rm sample files available")
+        return files
+
+    def remarkable_documents(self) -> List[Path]:
+        """reMarkable .rmdoc documents: RM-Sticker-Press's samples (external test data)."""
+        files = sorted((self.repo("RM-Sticker-Press") / "RM-sticker-press" / "samples").glob("*.rmdoc"))
+        if not files:
+            pytest.skip("no .rmdoc sample files available")
         return files
 
     def notability_template(self) -> Path:
