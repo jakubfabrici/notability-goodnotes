@@ -58,6 +58,9 @@ gnnote/
   notability/archivebuilder.py NSKeyedArchiver object-graph builder (write)
   notability/reader.py   read_note(data: bytes) -> Document
   notability/writer.py   write_note(doc: Document, options: Options | None = None) -> bytes
+  readutil.py            bounded ZIP / JSON helpers shared by the other apps' readers
+  nebo/bink.py           MyScript BINK ink -> strokes + tag table
+  nebo/reader.py         read_nebo(data: bytes) -> Document            (MyScript Notes / Nebo, read only)
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
   server.py              stdlib HTTP server: static web UI + POST /api/convert
@@ -104,7 +107,11 @@ gnnote.goodnotes.reader.read_goodnotes(data: bytes) -> Document
 gnnote.goodnotes.writer.write_goodnotes(doc: Document, options: Options) -> bytes
 gnnote.notability.reader.read_note(data: bytes) -> Document
 gnnote.notability.writer.write_note(doc: Document, options: Options) -> bytes
+gnnote.nebo.reader.read_nebo(data: bytes) -> Document                 # read only
 ```
+
+Every format is one entry of `gnnote/formats.py` (`FORMATS`): id, name, extensions, a content
+sniffer and the reader / writer paths (`None` for a read-only app).
 
 Primitives:
 
@@ -347,6 +354,16 @@ event synthesis, inkref's confirmed stroke encoding):
   synthesised CGPath pools (`goodnotes-stroke.md` §2.2); only enabled if the pools regenerated
   for the hand-decoded sample stroke match GoodNotes' own bytes (test), otherwise the option
   falls back to flat with a warning.
+
+### 4.5 Other apps (read only)
+
+Readers of formats other apps write follow the same rules as the two original readers
+(tolerant, one warning per lossy step, `ValueError` only for "not a <format> file", bounded
+decompression through `readutil.ZipBundle`, at most 10 000 000 ink points per document).
+Their byte layouts, mappings and open questions are in their own notes:
+
+* MyScript Notes / Nebo `.nebo`: `docs/nebo.md` (BINK ink with pen classes, colours and the
+  pressure width law; the BDOM layout data is not decoded).
 
 ## 5. Web UI (`web/`)
 

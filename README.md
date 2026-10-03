@@ -11,6 +11,19 @@ app opens as its own.
 * Pure Python 3.11+, standard library only, MIT licence, clean-room implementation.
 * Runs as a web page in the browser (Pyodide, nothing is uploaded anywhere), as a command-line
   tool, as a Python library, or as a small self-hosted server (also as a Docker container).
+* Also reads other apps' files and converts them to GoodNotes or Notability with the ink
+  still editable (see [Other apps](#other-apps-read-only)).
+
+## Supported apps
+
+| App | Files | Read | Write | Notes |
+|---|---|---|---|---|
+| GoodNotes | `.goodnotes` | yes | yes | |
+| Notability | `.note` | yes | yes | |
+| MyScript Notes (Nebo) | `.nebo` | yes | no | `docs/nebo.md` |
+
+`python3 -m gnnote formats` prints the same list. Files of a read-only app convert to
+Notability unless `--to goodnotes` is given.
 
 ## What converts, and what is lossy
 
@@ -35,6 +48,16 @@ GoodNotes auto-shapes are converted silently: they become ordinary strokes drawn
 shape (straight sides stay straight; ellipses are sampled), only their translucent fill is
 dropped, with a warning.  Every other lossy step adds one human-readable warning, shown in
 the web page, printed by the CLI and returned in the `X-GnNote-Warnings` header of the server.
+
+## Other apps (read only)
+
+Their formats are reverse-engineered by third parties; gnnote reads them from the documented
+facts (sources and confidence in the linked notes) and writes ordinary GoodNotes or
+Notability files. Nothing here has been checked on a device of the source app.
+
+| App (files) | Handwriting | Pages and backgrounds | Not converted (one warning each) |
+|---|---|---|---|
+| MyScript Notes / Nebo (`.nebo`; also Kobo notebooks) | Editable ink with the stylesheet's pen widths, colours, Apple Pencil pressure (MyScript's width law) and highlighters | Page size from the file (A4 by default), enlarged to fit ink beyond it | Typed and converted text, typeset shapes, math and images (MyScript's layout data is not decoded) |
 
 ## Verification status
 
@@ -156,6 +179,7 @@ test with Chromium, once per pull-request change and on pushes to `main`; `pages
   what the 2026 GoodNotes builds (container schema 25/35) changed in page binding, strokes and elements.
 * `docs/notability-format.md`: the `.note` package and its `Session.plist` object graph.
 * `docs/ecosystem.md`: import/export capabilities of both apps, existing tools, licensing.
+* `docs/nebo.md`: MyScript Notes / Nebo packages and BINK ink, and how gnnote maps them.
 * `tests/e2e/README.md`: the browser end-to-end test.
 
 ## Acknowledgements

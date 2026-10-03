@@ -195,6 +195,13 @@ class SampleSet:
             pytest.skip("no .note sample files available")
         return files
 
+    def nebo_files(self) -> List[Path]:
+        """MyScript Notes / Nebo packages: inkterop's CC0 fixtures."""
+        files = sorted((self.repo("inkterop") / "core" / "tests" / "fixtures" / "nebo").glob("*.nebo"))
+        if not files:
+            pytest.skip("no .nebo sample files available")
+        return files
+
     def notability_template(self) -> Path:
         path = self.repo("notability-to-svg") / "example.note"
         if not path.is_file():

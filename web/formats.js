@@ -22,5 +22,16 @@ export const FORMATS = [
     "readable": true,
     "writable": true,
     "defaultTarget": "goodnotes"
+  },
+  {
+    "id": "nebo",
+    "name": "MyScript Notes (Nebo)",
+    "extension": ".nebo",
+    "inputExtensions": [
+      ".nebo"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
   }
 ];

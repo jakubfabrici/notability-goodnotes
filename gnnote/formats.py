@@ -80,6 +80,14 @@ def _sniff_notability(data: bytes, names: Optional[List[str]]) -> bool:
     return bool(names) and any(n == "Session.plist" or n.endswith("/Session.plist") for n in names)
 
 
+def _sniff_nebo(data: bytes, names: Optional[List[str]]) -> bool:
+    """MyScript Notes / Nebo: ``rel.json`` plus BINK ink or BDOM layout parts."""
+    if not names or "rel.json" not in names:
+        return False
+    return any(n.startswith("pages/") and n.endswith(("/ink.bink", "/page.bdom")) for n in names) or \
+        "index.bdom" in names
+
+
 FORMATS: Dict[str, NoteFormat] = {
     f.id: f
     for f in (
@@ -94,6 +102,11 @@ FORMATS: Dict[str, NoteFormat] = {
             input_extensions=(".note",), sniff=_sniff_notability,
             reader="gnnote.notability.reader:read_note",
             writer="gnnote.notability.writer:write_note",
+        ),
+        NoteFormat(
+            id="nebo", name="MyScript Notes (Nebo)", extension=".nebo",
+            input_extensions=(".nebo",), sniff=_sniff_nebo,
+            reader="gnnote.nebo.reader:read_nebo",
         ),
     )
 }

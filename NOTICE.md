@@ -25,3 +25,17 @@ implementation written from the byte-level research notes in `docs/`.
   into the `gnnote` package.
 * Other reference material (notability-to-svg, GPL-3.0; inkref and jojo-notes, no licence)
   informed the documented file-format facts only; no code was copied.
+
+## Readers of other apps' formats
+
+* **MyScript Notes / Nebo** (`gnnote/nebo/`, `docs/nebo.md`): the BINK byte layout, the tag
+  table and the pressure width law are those documented by inkterop
+  (`docs/formats/nebo.md`, CC BY 4.0, Copyright (c) 2026 Caleb (cable729),
+  https://github.com/cable729/inkterop); `docs/nebo.md` restates and extends those facts
+  in its own words, and the decoder was written from them (no inkterop code is included).
+  inkterop's MIT reader runs only as a separate-process test oracle. Further facts come from
+  **notein-export** (https://github.com/davidnoronha1/notein-export, MIT, Copyright (c) 2026
+  davidnoronha1) and **nebo-ocr** (https://github.com/tkgo11/nebo-ocr, MIT, Copyright (c)
+  2025 nebo-ocr contributors). Facts about Kobo notebooks come from **kollate**
+  (https://github.com/andrew-lawlor/kollate, GPL-3.0) and **KoboNotebookPlus**
+  (https://github.com/MRoiban/KoboNotebookPlus, no licence); no code from either was used.

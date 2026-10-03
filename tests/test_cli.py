@@ -16,7 +16,7 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from gnnote import __version__
+from gnnote import __version__, formats
 from gnnote.cli import build_parser, describe, main
 from gnnote.convert import GOODNOTES, NOTABILITY, Options
 from gnnote.goodnotes.reader import read_goodnotes
@@ -218,7 +218,9 @@ def test_batch_to_filter_and_failure(note_file: Path, goodnotes_file: Path, tmp_
     empty = tmp_path / "empty"
     empty.mkdir()
     assert main(["batch", str(empty)]) == 0
-    assert "no .goodnotes or .note files" in capsys.readouterr().out
+    message = capsys.readouterr().out
+    assert message.startswith("no ") and "files in" in message
+    assert all(ext in message for f in formats.readable() for ext in f.input_extensions)
     assert main(["batch", str(tmp_path / "missing-dir")]) == 1
     assert "not a directory" in capsys.readouterr().err
 

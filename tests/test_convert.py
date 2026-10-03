@@ -42,7 +42,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pytest
 
-from gnnote import applelz4, protobuf, tpl
+from gnnote import applelz4, formats, protobuf, tpl
 from gnnote.convert import (EXTENSIONS, GOODNOTES, NOTABILITY, ConvertResult, Options, convert,
                             detect_format, document_stats, other_format, output_filename, to_document)
 from gnnote.goodnotes.reader import read_goodnotes
@@ -179,7 +179,8 @@ def test_other_format_and_output_filename() -> None:
     assert output_filename("archive.zip", NOTABILITY) == "archive.note"
     assert output_filename(".note", GOODNOTES) == ".note.goodnotes"
     assert output_filename("", NOTABILITY) == "converted.note"
-    assert EXTENSIONS == {GOODNOTES: ".goodnotes", NOTABILITY: ".note"}
+    assert EXTENSIONS[GOODNOTES] == ".goodnotes" and EXTENSIONS[NOTABILITY] == ".note"
+    assert EXTENSIONS == {f.id: f.extension for f in formats.FORMATS.values()}
 
 
 def test_options_validation() -> None:
