@@ -49,8 +49,11 @@ REPOS: Dict[str, Tuple[str, str]] = {
                  "f16eb8d2a425637aab629e6cc90c00a18f17009f"),
     "denotability": ("https://github.com/miroreo/denotability",
                      "7c44cfd5627b4875b7bcbd262c3997fb130b001e"),
-    # The Xournal++ (GPL-2.0) app repository is used only for its test files, as external test
-    # data fetched here; none of its files or code is part of gnnote.
+    # The Saber (GPL-3.0) and Xournal++ (GPL-2.0) app repositories are used only for their
+    # test files, as external test data fetched here; none of their files or code is part of
+    # gnnote.
+    "saber": ("https://github.com/saber-notes/saber",
+              "f143d84b46cb6faf795b13c00aee6d31f69e5da9"),
     "xournalpp": ("https://github.com/xournalpp/xournalpp",
                   "9882ffaaf2c012a1de4c33161eb4284468d84b9d"),
 }
@@ -60,6 +63,7 @@ REPOS: Dict[str, Tuple[str, str]] = {
 # downloaded; cone mode also brings the files directly in each listed directory's parents).
 # Repositories not listed here are checked out completely.
 SPARSE: Dict[str, Tuple[str, ...]] = {
+    "saber": ("test/sbn_examples", "test/demo_notes"),
     "xournalpp": ("test/files/load", "test/files/packaged_xopp"),
 }
 
@@ -209,6 +213,22 @@ class SampleSet:
         if not files:
             pytest.skip("no Xournal++ sample files available")
         return files
+
+    def saber_files(self) -> List[Path]:
+        """Saber's own example notes (``test/sbn_examples``, ``test/demo_notes``)."""
+        root = self.repo("saber") / "test"
+        files = sorted(p for sub in ("sbn_examples", "demo_notes") for p in (root / sub).glob("*")
+                       if p.is_file() and p.suffix in (".sbn", ".sbn2"))
+        if not files:
+            pytest.skip("no Saber sample files available")
+        return files
+
+    def inkterop_fixture(self, *parts: str) -> Path:
+        """A CC0 fixture of inkterop (``core/tests/fixtures/...``)."""
+        path = self.repo("inkterop").joinpath("core", "tests", "fixtures", *parts)
+        if not path.is_file():
+            pytest.skip(f"inkterop fixture {'/'.join(parts)} not available")
+        return path
 
     def notability_template(self) -> Path:
         path = self.repo("notability-to-svg") / "example.note"

@@ -60,6 +60,7 @@ gnnote/
   notability/writer.py   write_note(doc: Document, options: Options | None = None) -> bytes
   codecutil.py           helpers of the open-format codecs: image sniffing, polylines, bounded ZIP / inflate
   xournalpp/             Xournal++ .xopp / .xoj: reader.read_xopp, writer.write_xopp (docs/xournalpp.md)
+  saber/                 Saber .sba / .sbn2 / .sbn: bson, reader.read_saber, writer.write_saber (docs/saber.md)
   formats.py             registry of the supported apps (id, extensions, sniffer, reader, writer)
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
@@ -409,7 +410,7 @@ event synthesis, inkref's confirmed stroke encoding):
   (`franzthiemann/goodparse`, `Kaih1825/parser-for-goodnotes`, `HuyNguyenAu/notability-to-svg`,
   `xrayshan/notability-reader`, `jvns/svg2notability`, `samuelsadok/notesconverter`,
   `nokcha0/Notability-notes-converter`, `cable729/inkterop`, `miroreo/denotability`, and the test
-  files of `xournalpp/xournalpp` (sparse checkout)), taken from `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
+  files of `xournalpp/xournalpp` and `saber-notes/saber` (sparse checkouts)), taken from `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
   `tests/.samples/` (skipped when offline). Oracle parsers run **in a subprocess** with their
   own `PYTHONPATH` (never imported into our package).
 * Unit tests per primitive (hand-built vectors + round trips). Reader tests over every sample

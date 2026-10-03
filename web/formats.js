@@ -34,5 +34,18 @@ export const FORMATS = [
     "readable": true,
     "writable": true,
     "defaultTarget": "notability"
+  },
+  {
+    "id": "saber",
+    "name": "Saber",
+    "extension": ".sba",
+    "inputExtensions": [
+      ".sba",
+      ".sbn2",
+      ".sbn"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
   }
 ];

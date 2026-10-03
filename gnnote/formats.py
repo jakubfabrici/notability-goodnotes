@@ -100,6 +100,19 @@ def _sniff_xournalpp(data: bytes, names: Optional[List[str]]) -> bool:
     return bool(_XML_ROOT_RE.match(head.lstrip(b"\xef\xbb\xbf \t\r\n")))
 
 
+def _sniff_saber(data: bytes, names: Optional[List[str]]) -> bool:
+    """A ZIP holding a ``.sbn2`` / ``.sbn`` note (``.sba``), a BSON document that is exactly
+    the file and starts with the int32 version ``v`` (``.sbn2``), or legacy JSON with Saber's
+    ``v`` key and a ``z`` / ``ni`` key or a stroke list ``s`` near the start (``.sbn``)."""
+    if names is not None:
+        return any(n.lower().endswith((".sbn2", ".sbn")) for n in names)
+    if len(data) >= 12 and data[4:7] == b"\x10v\x00" and int.from_bytes(data[:4], "little") == len(data):
+        return True
+    head = data[:65536].lstrip(b"\xef\xbb\xbf \t\r\n")
+    return head[:1] == b"{" and bool(re.search(rb'"v"\s*:\s*\d', head)) \
+        and bool(re.search(rb'"(?:z|ni)"\s*:|"s"\s*:\s*\[', head))
+
+
 FORMATS: Dict[str, NoteFormat] = {
     f.id: f
     for f in (
@@ -120,6 +133,12 @@ FORMATS: Dict[str, NoteFormat] = {
             input_extensions=(".xopp", ".xoj"), sniff=_sniff_xournalpp,
             reader="gnnote.xournalpp.reader:read_xopp",
             writer="gnnote.xournalpp.writer:write_xopp",
+        ),
+        NoteFormat(
+            id="saber", name="Saber", extension=".sba",
+            input_extensions=(".sba", ".sbn2", ".sbn"), sniff=_sniff_saber,
+            reader="gnnote.saber.reader:read_saber",
+            writer="gnnote.saber.writer:write_saber",
         ),
     )
 }

@@ -16,10 +16,16 @@ implementation written from the byte-level research notes in `docs/`.
   Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND."
   The open-format codecs adapt further parts of inkterop under the same notice: the shape of
   the Xournal++ output in `gnnote/xournalpp/writer.py` follows inkterop's xopp writer
-  (`core/src/inkterop/formats/xopp/`).
-* **Xournal++** (https://github.com/xournalpp/xournalpp, GPL-2.0) was consulted for format
-  facts only (its loader, saver and test files); no code was copied. Its test files are fetched
-  by the test suite as external test data and are not part of this repository.
+  (`core/src/inkterop/formats/xopp/`); the BSON codec `gnnote/saber/bson.py` and the document
+  shape of `gnnote/saber/writer.py` are adapted from inkterop's Saber reader and writer
+  (`core/src/inkterop/formats/saber/`).
+* **Xournal++** (https://github.com/xournalpp/xournalpp, GPL-2.0) and **Saber**
+  (https://github.com/saber-notes/saber, GPL-3.0) were consulted for format facts only (their
+  loaders, savers and test files); no code was copied. Their test files are fetched by the test
+  suite as external test data and are not part of this repository.
+* The Saber ink width law is the documented radius formula of **perfect-freehand**
+  (https://github.com/steveruizok/perfect-freehand, Dart port by Adil Hanney, MIT); no code was
+  copied.
 * `gnnote/applelz4.py` shares its module name and the names of its public helpers with the
   corresponding module of goodparse (the names follow Apple's `libcompression` terminology);
   its implementation was written from `docs/ecosystem.md` section 3 and the LZ4 block format

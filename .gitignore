@@ -12,4 +12,7 @@ tests/.samples/
 *.goodnotes
 *.xopp
 *.xoj
+*.sba
+*.sbn2
+*.sbn
 !tests/fixtures/**
