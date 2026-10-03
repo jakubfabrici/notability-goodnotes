@@ -48,7 +48,8 @@ a uniform speed). `line`, `arrow` and shapes are stroked 1:1 with `strokeWidth`.
   A4 page). Coordinates are relative to the page's top-left corner, x 0.75.
 * **freedraw** -> polyline `Stroke`: `angle` applied about the centre of the points' bounding
   box; widths by the law (per pressure; simulated: 6.9 x `strokeWidth`; no pressures and no
-  simulation: 6.01 x); colour = `strokeColor` with `opacity` (and an 8-digit colour's alpha).
+  simulation: 6.01 x); colour = `strokeColor` (missing: `#1e1e1e`, `restore()`'s default) with
+  `opacity` (and an 8-digit colour's alpha).
   `customData.gnnote.kind` / `.pen` (written by gnnote) restore highlighters and pen names.
 * **line / arrow** -> polyline of width `strokeWidth`; arrowheads dropped (warning). A closed
   line (`polygon`, or first point = last point) with a `backgroundColor` adds a shape fill.
@@ -67,7 +68,9 @@ a uniform speed). `line`, `arrow` and shapes are stroked 1:1 with `strokeWidth`.
 * **Hardening**: at most 256 MB of JSON (`ValueError` beyond; JSON nested too deeply is a
   `ValueError` too), 500 000 elements, 200 000 points per element, 5 000 000 points in all,
   256 MB per decoded image and 1 GB for all images; coordinates beyond 10^7 px or not finite
-  are skipped. Only `ValueError` leaves `read_excalidraw`.
+  (JSON integers too large for a float included) are skipped, such sizes count as 0; stroke
+  widths and font sizes are clamped to 10^4 pt, line heights outside 0 .. 10 and angles beyond
+  one turn are normalised. Only `ValueError` leaves `read_excalidraw`.
 
 ## 3. Writing (`writer.py`)
 
@@ -95,6 +98,8 @@ a uniform speed). `line`, `arrow` and shapes are stroked 1:1 with `strokeWidth`.
   dropped (Excalidraw has neither; warning). Rasterising pages is out of scope.
 * `id` (21 characters), `seed` and `versionNonce` are random; `Options.random_seed` makes them
   and the `updated` stamps reproducible.
+* JSON has no NaN / Infinity: a non-finite rotation is written as 0, and any other value out of
+  float range (only damaged input has one) as 0 with a warning.
 
 ## 4. Limitations and what to check in the app
 

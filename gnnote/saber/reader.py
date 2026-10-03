@@ -39,7 +39,7 @@ import struct
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .. import pdfutil
-from ..codecutil import BoundedZip, Counter, ensure_bytes, image_pixel_size, sniff_image
+from ..codecutil import MAX_COORD_PT, MAX_SIZE_PT, BoundedZip, Counter, ensure_bytes, image_pixel_size, sniff_image
 from ..model import RGBA, Document, Image, Page, PdfBackground, Point, Stroke, TextBox, TextRun
 from . import (APPROXIMATED_PATTERNS, BOX_FIT, DEFAULT_LINE_HEIGHT, DEFAULT_PAGE_SIZE,
                DEFAULT_PRESSURE_ENABLED, DEFAULT_SIZE, DEFAULT_THINNING,
@@ -54,7 +54,8 @@ MAX_NOTE_BYTES = 256 * 1024 * 1024  # the BSON / JSON note itself
 MAX_PAGES = 10_000
 MAX_POINTS_PER_STROKE = 200_000
 MAX_TOTAL_POINTS = 5_000_000
-MAX_PAGE_SIDE = 1e6  # units
+MAX_PAGE_SIDE = 1e6  # units (and pt for a page sized by its PDF background)
+MAX_PEN_SIZE = 1000.0  # units; larger stroke sizes are damage
 KAPPA = 0.5522847498307936  # cubic Bezier handle length of a quarter circle
 DROPPED_TOOLS = ("Eraser", "LaserPointer", "Select", "TextEditingTool")
 
@@ -65,6 +66,7 @@ _MESSAGES = {
     "image_pdf_page": "{n} PDF images show a PDF page other than the first and were skipped",
     "image_crop": "{n} image crops are not applied; the full image is shown in the crop's frame",
     "image_box": "{n} images without a valid position or size were skipped",
+    "shape_box": "{n} shapes without a valid position or size were skipped",
     "text": "Saber's page text was placed in one text box per page; its layout is approximated",
     "text_embeds": "{n} embedded objects in page text (formulas, images) were dropped",
     "tools": "{n} strokes of the eraser, laser pointer or selection tools were dropped",
@@ -84,9 +86,14 @@ def width_for_pressure(size: float, thinning: float, pressure: float) -> float:
 
 
 def _number(value: Any, default: float) -> float:
+    """A finite number as float; ``default`` for anything else (a JSON integer too large for
+    a float included)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return default
-    v = float(value)
+    try:
+        v = float(value)
+    except OverflowError:
+        return default
     return v if math.isfinite(v) else default
 
 
@@ -98,6 +105,11 @@ def _integer(value: Any, default: Optional[int] = None) -> Optional[int]:
     if isinstance(value, float) and math.isfinite(value) and value == int(value):
         return int(value)
     return default
+
+
+def _in_range(*values: float) -> bool:
+    """Every value finite and within the model's coordinate range (pt)."""
+    return all(abs(v) <= MAX_COORD_PT for v in values)
 
 
 def _argb(value: Any, default: RGBA = (0.0, 0.0, 0.0, 1.0)) -> RGBA:
@@ -317,7 +329,7 @@ class _Reader:
     def size(self, pj: Dict[str, Any], fallback: Tuple[float, float]) -> Tuple[float, float]:
         w = _number(pj.get("w"), fallback[0])
         h = _number(pj.get("h"), fallback[1])
-        if not (0 < w <= MAX_PAGE_SIDE and 0 < h <= MAX_PAGE_SIDE):
+        if not (1.0 <= w <= MAX_PAGE_SIDE and 1.0 <= h <= MAX_PAGE_SIDE):
             self.counts.add("page_size")
             return DEFAULT_PAGE_SIZE
         return w, h
@@ -361,7 +373,7 @@ class _Reader:
                     size = self.pdf_page_size(pid, data, pdf_page)
                     if size is None:
                         size = (_number(bg.get("nw"), 0.0), _number(bg.get("nh"), 0.0))
-                    if size[0] > 0 and size[1] > 0:
+                    if 0 < size[0] <= MAX_PAGE_SIDE and 0 < size[1] and h * size[0] / w <= MAX_PAGE_SIDE:
                         scale = size[0] / w
                         background = PdfBackground(pid, pdf_page)
                     else:
@@ -382,17 +394,26 @@ class _Reader:
                        _number(bg.get("nh"), float(pixels[1]) if pixels else 0.0))
             fit_index = _integer(bg.get("f"), 1)
             fit = BOX_FIT[fit_index] if fit_index is not None and 0 <= fit_index < len(BOX_FIT) else "contain"
-            x, y, bw, bh = _fit(fit, natural, (w, h))
-            page.images.append(Image(x * scale, y * scale, bw * scale, bh * scale, data, fmt=kind))
-        for sj in pj.get("s") or []:
-            if isinstance(sj, dict):
-                self.stroke(page, sj, scale)
-        for ij in pj.get("i") or []:
-            if isinstance(ij, dict):
-                self.image(page, ij, scale)
+            box = tuple(v * scale for v in _fit(fit, natural, (w, h)))
+            if _in_range(*box) and box[2] > 0 and box[3] > 0:
+                page.images.insert(0, Image(box[0], box[1], box[2], box[3], data, fmt=kind))
+            else:
+                self.counts.add("image_box")
+        for key, handler, what in (("s", self.stroke, "stroke"), ("i", self.image, "image")):
+            items = pj.get(key)
+            for item in items if isinstance(items, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    handler(page, item, scale)
+                except Exception as exc:  # noqa: BLE001 - tolerant reader: never fail on one element
+                    self.warn(f"Page {index + 1}: a {what} was skipped ({exc.__class__.__name__}: {exc})")
         quill = pj.get("q")
         if isinstance(quill, list):
-            self.text(page, quill, scale)
+            try:
+                self.text(page, quill, scale)
+            except Exception as exc:  # noqa: BLE001 - tolerant reader: never fail on one element
+                self.warn(f"Page {index + 1}: its text was skipped ({exc.__class__.__name__}: {exc})")
         return page
 
     def legacy(self, root: Dict[str, Any], fallback: Tuple[float, float]) -> None:
@@ -410,11 +431,14 @@ class _Reader:
                 while len(self.doc.pages) <= index:
                     self.doc.pages.append(self.blank_page(fallback))
                 page = self.doc.pages[index]
-                scale = PT_PER_UNIT
-                if key == "s":
-                    self.stroke(page, item, scale)
-                else:
-                    self.image(page, item, scale)
+                try:
+                    if key == "s":
+                        self.stroke(page, item, PT_PER_UNIT)
+                    else:
+                        self.image(page, item, PT_PER_UNIT)
+                except Exception as exc:  # noqa: BLE001 - tolerant reader: never fail on one element
+                    self.warn(f"Page {index + 1}: a {'stroke' if key == 's' else 'image'} was skipped "
+                              f"({exc.__class__.__name__}: {exc})")
 
     # -- strokes -------------------------------------------------------------------------------------
 
@@ -435,12 +459,9 @@ class _Reader:
                 pressure = values[2] if n >= 3 else None
                 out.append((values[0] + ox, values[1] + oy, pressure))
             elif isinstance(p, dict):
-                x, y = p.get("x"), p.get("y")
-                if isinstance(x, (int, float)) and isinstance(y, (int, float)) \
-                        and not isinstance(x, bool) and not isinstance(y, bool):
-                    pr = p.get("p")
-                    pressure = float(pr) if isinstance(pr, (int, float)) and not isinstance(pr, bool) else None
-                    out.append((float(x) + ox, float(y) + oy, pressure))
+                pr = p.get("p")
+                pressure = _number(pr, 0.5) if isinstance(pr, (int, float)) and not isinstance(pr, bool) else None
+                out.append((_number(p.get("x"), math.nan) + ox, _number(p.get("y"), math.nan) + oy, pressure))
         return out
 
     def stroke(self, page: Page, sj: Dict[str, Any], scale: float) -> None:
@@ -452,23 +473,28 @@ class _Reader:
         size = _number(sj.get("s"), DEFAULT_SIZE)
         if size <= 0:
             size = DEFAULT_SIZE
-        thinning = _number(sj.get("t"), DEFAULT_THINNING)
+        size = min(size, MAX_PEN_SIZE)
+        thinning = min(1.0, max(-1.0, _number(sj.get("t"), DEFAULT_THINNING)))  # perfect-freehand's range
         pressure_enabled = sj.get("pe", DEFAULT_PRESSURE_ENABLED) is not False
         kind = "highlighter" if tool == HIGHLIGHTER else "pen"
         pen = PEN_NAMES.get(tool)
-        width = size * scale
+        width = min(size * scale, MAX_SIZE_PT)
         shape = sj.get("shape")
         if shape == "circle":
             cx, cy = _number(sj.get("cx"), 0.0) * scale, _number(sj.get("cy"), 0.0) * scale
             r = _number(sj.get("r"), 0.0) * scale
-            if r > 0:
+            if not _in_range(cx, cy, 2 * r):
+                self.counts.add("shape_box")
+            elif r > 0:
                 anchors, controls = _bezier_circle(cx, cy, r, width)
                 page.strokes.append(Stroke(anchors, color=color, kind=kind, pen=pen, width=width, controls=controls))
             return
         if shape == "rect":
             x0, y0 = _number(sj.get("rl"), 0.0) * scale, _number(sj.get("rt"), 0.0) * scale
             rw, rh = _number(sj.get("rw"), 0.0) * scale, _number(sj.get("rh"), 0.0) * scale
-            if rw > 0 or rh > 0:
+            if not _in_range(x0, y0, x0 + rw, y0 + rh):
+                self.counts.add("shape_box")
+            elif rw > 0 or rh > 0:
                 corners = [Point(x0, y0, width), Point(x0 + rw, y0, width), Point(x0 + rw, y0 + rh, width),
                            Point(x0, y0 + rh, width), Point(x0, y0, width)]
                 page.strokes.append(Stroke(corners, color=color, kind=kind, pen=pen, width=width,
@@ -483,14 +509,14 @@ class _Reader:
         # "sp" is true) a stroke is read at its nominal size: the speed is not recorded.
         points: List[Point] = []
         for x, y, pressure in raw:
-            if not (math.isfinite(x) and math.isfinite(y)):
+            if not _in_range(x * scale, y * scale):
                 self.counts.add("points")
                 continue
             if pressure_enabled and pressure is not None:
                 w = width_for_pressure(size, thinning, pressure)
             else:
                 w = size  # no pressure (or simulated from speed): the nominal size
-            points.append(Point(x * scale, y * scale, w * scale))
+            points.append(Point(x * scale, y * scale, min(w * scale, MAX_SIZE_PT)))
         if points:
             page.strokes.append(Stroke(points, color=color, kind=kind, pen=pen, width=width))
 
@@ -499,7 +525,7 @@ class _Reader:
     def image(self, page: Page, ij: Dict[str, Any], scale: float) -> None:
         x, y = _number(ij.get("x"), float("nan")), _number(ij.get("y"), float("nan"))
         w, h = _number(ij.get("w"), 0.0), _number(ij.get("h"), 0.0)
-        if not (math.isfinite(x) and math.isfinite(y)) or w <= 0 or h <= 0:
+        if not _in_range(x * scale, y * scale, w * scale, h * scale) or w <= 0 or h <= 0:
             self.counts.add("image_box")
             return
         data = self.image_bytes(ij)
@@ -525,7 +551,7 @@ class _Reader:
     def text(self, page: Page, ops: List[Any], scale: float) -> None:
         runs: List[TextRun] = []
         line_height = self.line_height
-        size = line_height * scale
+        size = min(line_height * scale, MAX_SIZE_PT)
         for op in ops:
             if not isinstance(op, dict):
                 continue
@@ -557,9 +583,10 @@ class _Reader:
                 trimmed.append(TextRun(t, run.bold, run.italic, run.underline, run.font, run.size, run.color))
         lines = body.count("\n") + 1
         self.counts.add("text")
-        page.texts.append(TextBox(TEXT_SIDE * line_height * scale, (TEXT_TOP + leading) * line_height * scale,
-                                  max(1.0, page.width - 2 * TEXT_SIDE * line_height * scale),
-                                  lines * line_height * scale, body, runs=trimmed, size=size))
+        unit = line_height * scale
+        x, y = min(TEXT_SIDE * unit, MAX_COORD_PT), min((TEXT_TOP + leading) * unit, MAX_COORD_PT)
+        page.texts.append(TextBox(x, y, max(1.0, page.width - 2 * x), min(lines * unit, MAX_COORD_PT), body,
+                                  runs=trimmed, size=size))
 
 
 def read_saber(data: bytes) -> Document:

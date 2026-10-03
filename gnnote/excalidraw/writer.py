@@ -39,7 +39,7 @@ from .. import __version__
 from ..codecutil import Counter, clamp_rgba, is_finite, sniff_image, stroke_polyline, to_byte
 from ..model import Document, Image, Page, Stroke, TextBox
 from ..notability.writer import text_origin_for_centre_pivot
-from . import (DEFAULT_FONT_FAMILY, FONT_NAMES, LINE_HEIGHT, MAX_FACTOR, MIN_FACTOR, PAGE_GAP_PX, PT_PER_PX,
+from . import (DEFAULT_FONT_FAMILY, DEFAULT_STROKE_COLOR, FONT_NAMES, LINE_HEIGHT, MAX_FACTOR, MIN_FACTOR, PAGE_GAP_PX, PT_PER_PX,
                pressure_for_factor)
 
 __all__ = ["write_excalidraw", "build_scene"]
@@ -79,6 +79,22 @@ def _r(v: float) -> float:
     return 0.0 if out == 0 else out
 
 
+def _radians(degrees: float) -> float:
+    """A model rotation (degrees, clockwise) as Excalidraw's ``angle`` (0 when not finite)."""
+    return math.radians(float(degrees) % 360.0) if is_finite(degrees) else 0.0
+
+
+def _finite_tree(value: Any) -> Any:
+    """``value`` with every non-finite float replaced by 0 (JSON has no NaN / Infinity)."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else 0.0
+    if isinstance(value, dict):
+        return {k: _finite_tree(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_finite_tree(v) for v in value]
+    return value
+
+
 def _wrap(text: str, width_px: float, font_px: float) -> str:
     """Greedy word wrap at ``width_px`` with an average glyph width (Excalidraw re-wraps
     ``originalText`` with real metrics when the text is edited)."""
@@ -112,7 +128,7 @@ class _Writer:
         return "".join(self.rng.choice(_ID_ALPHABET) for _ in range(21))
 
     def base(self, kind: str, x: float, y: float, w: float, h: float, frame: Optional[str], *,
-             stroke: str = "#1e1e1e", stroke_width: float = 1.0, opacity: float = 1.0,
+             stroke: str = DEFAULT_STROKE_COLOR, stroke_width: float = 1.0, opacity: float = 1.0,
              background: str = "transparent", angle: float = 0.0) -> Dict[str, Any]:
         return {
             "id": self.new_id(), "type": kind, "x": _r(x), "y": _r(y), "width": _r(w), "height": _r(h),
@@ -143,7 +159,7 @@ class _Writer:
         if len(rel) == 1:  # Excalidraw stores a dot with a second point 0.0001 px away
             rel.append([0.0001, 0.0001])
             widths.append(widths[0])
-        stroke_width = max(widths) / MAX_FACTOR
+        stroke_width = max(max(widths) / MAX_FACTOR, 1e-4)  # not rounded to 0 in the JSON
         if min(widths) < max(widths) * (MIN_FACTOR / MAX_FACTOR) * (1.0 - 1e-9):
             self.counts.add("taper")
         pressures = [round(pressure_for_factor(w / stroke_width), 4) for w in widths]
@@ -200,7 +216,7 @@ class _Writer:
                                    "created": self.updated, "lastRetrieved": self.updated}
         el = self.base("image", image.x / PT_PER_PX + ox, image.y / PT_PER_PX + oy, image.w / PT_PER_PX,
                        image.h / PT_PER_PX, frame, stroke="transparent",
-                       angle=math.radians(float(image.rotation or 0.0) % 360.0))
+                       angle=_radians(image.rotation or 0.0))
         el.update({"fileId": file_id, "status": "saved", "scale": [1, 1], "crop": None})
         return el
 
@@ -234,7 +250,7 @@ class _Writer:
             width_px = max(width_px, longest * CHAR_EM * font_px, 1.0)
         height_px = max((shown.count("\n") + 1) * font_px * LINE_HEIGHT,
                         box.h / PT_PER_PX if is_finite(box.h) and box.h > 0 else 0.0)
-        theta = math.radians(float(box.rotation or 0.0) % 360.0)
+        theta = _radians(box.rotation or 0.0)
         x, y = box.x / PT_PER_PX, box.y / PT_PER_PX
         if abs(math.sin(theta)) > 1e-12 or math.cos(theta) < 0:
             x, y = text_origin_for_centre_pivot((x, y), (width_px, height_px), (0.0, 0.0), theta)
@@ -296,5 +312,10 @@ def write_excalidraw(doc: Document, options: Any = None) -> bytes:
     """Serialise ``doc`` as an Excalidraw ``.excalidraw`` scene (UTF-8 JSON, see the module
     docstring).  ``options`` is duck-typed: ``paper`` and ``random_seed`` are honoured; lossy
     steps are reported through ``doc.warn``."""
-    text = json.dumps(build_scene(doc, options), indent=2, ensure_ascii=False)
+    scene = build_scene(doc, options)
+    try:
+        text = json.dumps(scene, indent=2, ensure_ascii=False, allow_nan=False)
+    except ValueError:  # a value out of float range on the way; JSON cannot hold NaN / Infinity
+        doc.warn("Some coordinates or sizes were out of range and were written as 0")
+        text = json.dumps(_finite_tree(scene), indent=2, ensure_ascii=False, allow_nan=False)
     return _SURROGATES.sub("\ufffd", text).encode("utf-8")

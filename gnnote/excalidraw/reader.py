@@ -32,9 +32,9 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from .. import pdfutil
-from ..codecutil import Counter, ensure_bytes, sniff_image
+from ..codecutil import MAX_SIZE_PT, Counter, ensure_bytes, sniff_image
 from ..model import RGBA, Document, Image, Page, PdfBackground, Point, Stroke, TextBox, TextRun
-from . import FONT_NAMES, LINE_HEIGHT, PT_PER_PX, SIMULATED_FACTOR, thickness_factor
+from . import DEFAULT_STROKE_COLOR, FONT_NAMES, LINE_HEIGHT, PT_PER_PX, SIMULATED_FACTOR, thickness_factor
 
 __all__ = ["read_excalidraw", "MAX_SCENE_BYTES", "MAX_ELEMENTS", "MAX_POINTS_PER_ELEMENT", "MAX_TOTAL_POINTS",
            "MAX_FILE_BYTES", "MAX_FILES_BYTES"]
@@ -47,6 +47,7 @@ MAX_FILE_BYTES = 256 * 1024 * 1024  # one decoded image
 MAX_FILES_BYTES = 1024 * 1024 * 1024  # all decoded images
 MAX_PAGES = 10_000
 MAX_COORD = 1e7  # px; coordinates beyond this are damage
+MAX_SIZE = MAX_SIZE_PT / PT_PER_PX  # px; stroke widths and font sizes are clamped to this
 PAGE_MARGIN_PX = 20.0
 FRAME_TYPES = ("frame", "magicframe")
 CLOSED_SHAPES = ("rectangle", "diamond", "ellipse", "stickynote")
@@ -72,10 +73,33 @@ _MESSAGES = {
 
 
 def _num(value: Any, default: float = 0.0) -> float:
+    """A finite JSON number as float; ``default`` for anything else (an integer too large for
+    a float included)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return default
-    v = float(value)
+    try:
+        v = float(value)
+    except OverflowError:
+        return default
     return v if math.isfinite(v) else default
+
+
+def _angle(el: Dict[str, Any]) -> float:
+    """The element's ``angle`` (radians) reduced to one turn."""
+    return math.fmod(_num(el.get("angle")), 2.0 * math.pi)
+
+
+def _size(value: Any, default: float) -> float:
+    """A positive stroke width or font size in px (``default`` when missing or not positive),
+    clamped to ``MAX_SIZE``."""
+    v = _num(value, default)
+    return min(v if v > 0 else default, MAX_SIZE)
+
+
+def _coord(value: Any) -> float:
+    """A coordinate in px: finite and within ``MAX_COORD``, else NaN."""
+    v = _num(value, math.nan)
+    return v if abs(v) <= MAX_COORD else math.nan
 
 
 def parse_color(value: Any) -> Optional[Tuple[float, float, float, float]]:
@@ -184,22 +208,24 @@ class _Reader:
 
     def bounds(self, el: Dict[str, Any]) -> Optional[Tuple[float, float, float, float]]:
         """Unrotated bounding box ``(x0, y0, x1, y1)`` in px; ``None`` when invalid."""
-        x, y = _num(el.get("x"), math.nan), _num(el.get("y"), math.nan)
-        if not (math.isfinite(x) and math.isfinite(y)) or abs(x) > MAX_COORD or abs(y) > MAX_COORD:
+        x, y = _coord(el.get("x")), _coord(el.get("y"))
+        if not (math.isfinite(x) and math.isfinite(y)):
             return None
         points = el.get("points")
         if el.get("type") in ("freedraw", "line", "arrow") and isinstance(points, list) and points:
             xs, ys = [], []
             for p in points[:MAX_POINTS_PER_ELEMENT]:
                 if isinstance(p, (list, tuple)) and len(p) >= 2:
-                    px, py = _num(p[0], math.nan), _num(p[1], math.nan)
+                    px, py = _coord(p[0]), _coord(p[1])
                     if math.isfinite(px) and math.isfinite(py):
                         xs.append(px)
                         ys.append(py)
             if not xs:
                 return None
             return x + min(xs), y + min(ys), x + max(xs), y + max(ys)
-        w, h = _num(el.get("width")), _num(el.get("height"))
+        w, h = _coord(el.get("width")), _coord(el.get("height"))
+        w = w if math.isfinite(w) else 0.0
+        h = h if math.isfinite(h) else 0.0
         return x, y, x + max(0.0, w), y + max(0.0, h)
 
     def layout(self, elements: List[Dict[str, Any]]) -> List[_PageSpec]:
@@ -245,6 +271,8 @@ class _Reader:
 
     def style(self, el: Dict[str, Any], key: str = "strokeColor") -> Optional[RGBA]:
         raw = el.get(key)
+        if raw is None and key == "strokeColor":
+            raw = DEFAULT_STROKE_COLOR  # what Excalidraw's restore() fills in
         color = parse_color(raw)
         if color is None:
             if isinstance(raw, str) and raw.strip().lower() not in ("", "transparent", "none"):
@@ -270,7 +298,7 @@ class _Reader:
 
     def transform(self, spec: _PageSpec, el: Dict[str, Any], cx: float, cy: float):
         """A function mapping absolute px to page pt with the element's rotation about (cx, cy)."""
-        angle = _num(el.get("angle"))
+        angle = _angle(el)
         cos_t, sin_t = math.cos(angle), math.sin(angle)
 
         def to_page(x: float, y: float) -> Tuple[float, float]:
@@ -294,9 +322,7 @@ class _Reader:
         self.total_points += len(raw)
         x0, y0 = _num(el.get("x")), _num(el.get("y"))
         to_page = self.transform(spec, el, (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
-        stroke_width = _num(el.get("strokeWidth"), 1.0)
-        if stroke_width <= 0:
-            stroke_width = 1.0
+        stroke_width = _size(el.get("strokeWidth"), 1.0)
         kind = el.get("type")
         widths: List[float]
         pressures = el.get("pressures")
@@ -317,11 +343,12 @@ class _Reader:
                 self.counts.add("rough")
             if kind == "arrow" and (el.get("startArrowhead") or el.get("endArrowhead", "arrow")):
                 self.counts.add("arrowheads")
+        widths = [min(w, MAX_SIZE) for w in widths]
         points: List[Point] = []
         for p, w in zip(raw, widths):
             if not (isinstance(p, (list, tuple)) and len(p) >= 2):
                 continue
-            px, py = _num(p[0], math.nan), _num(p[1], math.nan)
+            px, py = _coord(p[0]), _coord(p[1])
             if not (math.isfinite(px) and math.isfinite(py)):
                 continue
             x, y = to_page(x0 + px, y0 + py)
@@ -358,7 +385,7 @@ class _Reader:
         x0, y0, x1, y1 = box
         cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
         to_page = self.transform(spec, el, cx, cy)
-        width = max(_num(el.get("strokeWidth"), 1.0), 0.0) * PT_PER_PX or PT_PER_PX
+        width = _size(el.get("strokeWidth"), 1.0) * PT_PER_PX
         if el.get("strokeStyle") in ("dashed", "dotted"):
             self.counts.add("dashed")
         if _num(el.get("roughness")) > 0 or el.get("roundness"):
@@ -404,13 +431,14 @@ class _Reader:
             self.counts.add("invalid")
             return
         x0, y0, x1, y1 = box
-        size_px = _num(el.get("fontSize"), 20.0)
-        if size_px <= 0:
-            size_px = 20.0
+        size_px = _size(el.get("fontSize"), 20.0)
+        line_height = _num(el.get("lineHeight"), LINE_HEIGHT)
+        if not 0 < line_height <= 10:
+            line_height = LINE_HEIGHT
         lines = content.count("\n") + 1
         w = max(x1 - x0, 1.0)
-        h = max(y1 - y0, lines * size_px * _num(el.get("lineHeight"), LINE_HEIGHT))
-        angle = _num(el.get("angle"))
+        h = min(max(y1 - y0, lines * size_px * line_height), MAX_COORD)
+        angle = _angle(el)
         cx, cy = x0 + w / 2.0, y0 + h / 2.0
         # Excalidraw turns the box about its centre, the model about its top-left corner: the
         # model's corner is where the centre rotation puts Excalidraw's corner.
@@ -460,7 +488,7 @@ class _Reader:
             self.counts.add("image_crop")
         x0, y0, x1, y1 = box
         page.images.append(Image((x0 - spec.x) * PT_PER_PX, (y0 - spec.y) * PT_PER_PX, (x1 - x0) * PT_PER_PX,
-                                 (y1 - y0) * PT_PER_PX, data, fmt=fmt, rotation=math.degrees(_num(el.get("angle")))))
+                                 (y1 - y0) * PT_PER_PX, data, fmt=fmt, rotation=math.degrees(_angle(el))))
 
 
 def read_excalidraw(data: bytes) -> Document:

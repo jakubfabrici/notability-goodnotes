@@ -4,6 +4,7 @@ of the GoodNotes and Notability samples to ``.xopp`` and back, hardening and the
 sniffing and CLI plumbing."""
 from __future__ import annotations
 
+import base64
 import gzip
 import io
 import math
@@ -53,6 +54,17 @@ def _doc(body: str, page: str = '<page width="600" height="800">', bg: str =
          '<background type="solid" color="#ffffffff" style="plain"/>') -> str:
     return (f'<?xml version="1.0" standalone="no"?>\n<xournal creator="test" fileversion="4">\n'
             f"<title>t</title>\n{page}\n{bg}\n<layer>\n{body}\n</layer>\n</page>\n</xournal>\n")
+
+
+def _assert_bounded_and_writable(doc: Document) -> None:
+    """Extreme input values end up inside the model's bounds, and every writer accepts them."""
+    for page in doc.pages:
+        for s in page.strokes:
+            assert all(abs(p.x) <= 1e8 and abs(p.y) <= 1e8 and (p.width or 0) <= 1e4 for p in s.points)
+        assert all(t.size <= 1e4 and abs(t.x) <= 1e8 and abs(t.y) <= 1e8 and math.isfinite(t.rotation) for t in page.texts)
+        assert all(max(abs(i.x), abs(i.y), i.w, i.h) <= 1e8 and math.isfinite(i.rotation) for i in page.images)
+    for fmt in formats.writable():
+        assert fmt.write(doc, None)
 
 
 # --------------------------------------------------------------------------- synthetic round trip
@@ -492,6 +504,37 @@ def test_truncated_files_keep_what_was_read():
     gz = _gz(xml * 1)
     doc = read_xopp(gz[: len(gz) * 2 // 3])
     assert any("truncated" in w or "damaged" in w for w in doc.warnings)
+
+
+def test_bytes_after_the_gzip_stream_are_ignored():
+    xml = _doc('<stroke tool="pen" color="#000000ff" width="1">0 0 5 5</stroke>')
+    for tail in (b"\x00" * 8, b"trailing garbage"):  # zlib's gzread ignores both
+        doc = read_xopp(_gz(xml) + tail)
+        assert len(doc.pages[0].strokes) == 1 and not doc.warnings
+    doc = read_xopp(_gz(xml) + _gz(xml)[:12])  # a second gzip member that is cut off
+    assert len(doc.pages[0].strokes) == 1 and any("truncated" in w for w in doc.warnings)
+
+
+def test_extreme_values_stay_in_range():
+    big = "1e300"
+    image = base64.b64encode(png()).decode()
+    body = (f'<stroke tool="pen" color="#000000ff" width="{big} 1 {big}">0 0 {big} 5 10 10 20 20</stroke>\n'
+            f'<text font="Sans" size="{big}" x="5" y="5" color="#000000ff">big</text>\n'
+            f'<text font="Sans" size="12" x="{big}" y="5" color="#000000ff">far</text>\n'
+            f'<text font="Sans" size="12" x="5" y="5" matrix="{big} 0 0 {big} 5 5" color="#000000ff">scaled</text>\n'
+            f'<image left="0" top="0" right="{big}" bottom="10">{image}</image>\n'
+            f'<image left="0" top="0" right="10" bottom="10" matrix="{big} 0 0 1 0 0">{image}</image>')
+    doc = read_xopp(_doc(body).encode())
+    assert [t.text for t in doc.pages[0].texts] == ["big", "scaled"] and not doc.pages[0].images
+    assert any("out of range" in w for w in doc.warnings)
+    _assert_bounded_and_writable(doc)
+
+
+def test_non_finite_rotations_are_written_unrotated():
+    page = Page(200, 200, images=[Image(0, 0, 10, 10, png(), rotation=float("nan"))],
+                texts=[TextBox(5, 5, 50, 10, "x", rotation=float("inf"))])
+    xml = _xml(write_xopp(Document(pages=[page])))
+    assert "nan" not in xml and "inf" not in xml and "matrix" not in xml
 
 
 def test_zip_member_limit(monkeypatch):

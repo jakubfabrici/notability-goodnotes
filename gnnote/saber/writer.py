@@ -49,6 +49,7 @@ from .bson import encode
 __all__ = ["write_saber", "build_note", "pressure_for_width"]
 
 DEFAULT_PAGE_PT = (595.0, 833.0)  # a 1000 x 1400 page at 0.595 pt per unit
+MIN_PAGE_SIDE_PT = 1.0
 MAX_PAGE_SIDE_PT = 1e6
 MAX_RATIO = (1.0 + DEFAULT_THINNING) / (1.0 - DEFAULT_THINNING)  # widest / thinnest width one stroke can hold
 
@@ -151,16 +152,18 @@ class _Writer:
             k = self.scale(page)
             for box in page.texts:
                 size = box.runs[0].size if box.runs and box.runs[0].size else box.size
-                if size and is_finite(size) and size > 0:
+                if size and is_finite(size * k) and size > 0:
                     sizes.append(size * k)
         if not sizes:
             return DEFAULT_LINE_HEIGHT
         return int(min(100, max(20, round(statistics.median(sizes)))))
 
     @staticmethod
-    def scale(page: Page) -> float:
-        w = page.width if is_finite(page.width) and 0 < page.width <= MAX_PAGE_SIDE_PT else DEFAULT_PAGE_PT[0]
-        return PAGE_WIDTH / w
+    def valid_side(value: float) -> bool:
+        return is_finite(value) and MIN_PAGE_SIDE_PT <= value <= MAX_PAGE_SIDE_PT
+
+    def scale(self, page: Page) -> float:
+        return PAGE_WIDTH / (page.width if self.valid_side(page.width) else DEFAULT_PAGE_PT[0])
 
     # -- strokes ------------------------------------------------------------------------------------
 
@@ -218,9 +221,13 @@ class _Writer:
         rotation = float(image.rotation or 0.0) % 360.0
         if 1e-6 < rotation < 360.0 - 1e-6:
             self.counts.add("image_rotation")
+        box = (image.x * k, image.y * k, image.w * k, image.h * k)
+        if not is_finite(*box):
+            self.counts.add("image_empty")
+            return None
         kind = sniff_image(data)
         entry: Dict[str, Any] = {"id": self.new_id(), "e": "", "i": page_index, "v": True, "f": 1,
-                                 "x": image.x * k, "y": image.y * k, "w": image.w * k, "h": image.h * k}
+                                 "x": box[0], "y": box[1], "w": box[2], "h": box[3]}
         if kind in ("png", "jpeg"):
             entry["e"] = ".png" if kind == "png" else ".jpg"
             pixels = image_pixel_size(data)
@@ -260,16 +267,18 @@ class _Writer:
 
     # -- text -------------------------------------------------------------------------------------------
 
-    def quill(self, texts: List[TextBox], k: float) -> List[Dict[str, Any]]:
-        boxes = [b for b in texts if (b.text or "".join(r.text for r in b.runs)).strip() and is_finite(b.x, b.y)]
+    def quill(self, texts: List[TextBox], k: float, height: float) -> List[Dict[str, Any]]:
+        """Quill ops of a page ``height`` units tall (text below the page starts on its last line)."""
+        boxes = [b for b in texts if (b.text or "".join(r.text for r in b.runs)).strip() and is_finite(b.x, b.y * k)]
         if not boxes:
             return []
         self.counts.add("text")
         line_height = float(self.line_height)
+        last_line = max(0, int(height / line_height - TEXT_TOP))
         ops: List[Dict[str, Any]] = []
         line = 0
         for box in sorted(boxes, key=lambda b: (b.y, b.x)):
-            target = int(round((box.y * k) / line_height - TEXT_TOP))
+            target = int(round(min(last_line, (box.y * k) / line_height - TEXT_TOP)))
             if target > line:
                 ops.append({"insert": "\n" * (target - line)})
                 line = target
@@ -302,12 +311,10 @@ class _Writer:
         out_pages: List[Dict[str, Any]] = []
         fills = 0
         for index, page in enumerate(pages):
-            if not (is_finite(page.width, page.height) and 0 < page.width <= MAX_PAGE_SIDE_PT
-                    and 0 < page.height <= MAX_PAGE_SIDE_PT):
+            if not (self.valid_side(page.width) and self.valid_side(page.height)):
                 self.counts.add("page_size")
             k = self.scale(page)
-            height_pt = page.height if is_finite(page.height) and 0 < page.height <= MAX_PAGE_SIDE_PT \
-                else DEFAULT_PAGE_PT[1]
+            height_pt = page.height if self.valid_side(page.height) else DEFAULT_PAGE_PT[1]
             w, h = PAGE_WIDTH, height_pt * k
             entry: Dict[str, Any] = {"w": float(w), "h": float(h)}
             strokes = []
@@ -319,7 +326,7 @@ class _Writer:
                 if item is not None:
                     strokes.append(item)
             images = [x for x in (self.image(im, k, index) for im in page.images) if x is not None]
-            quill = self.quill(page.texts, k)
+            quill = self.quill(page.texts, k, h)
             background = self.background(page, k, index, w, h)
             if strokes:
                 entry["s"] = strokes
@@ -352,7 +359,9 @@ def write_saber(doc: Document, options: Any = None) -> bytes:
     Lossy steps are reported through ``doc.warn``.
     """
     main, assets = build_note(doc, options)
-    stamp = (1980, 1, 1, 0, 0, 0) if _opt(options, "random_seed", None) is not None else time.localtime()[:6]
+    stamp = (1980, 1, 1, 0, 0, 0)  # ZIP time stamps start in 1980
+    if _opt(options, "random_seed", None) is None:
+        stamp = max(stamp, tuple(time.localtime()[:6]))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in [(MAIN_MEMBER, main)] + [(f"{MAIN_MEMBER}.{i}", a) for i, a in enumerate(assets)]:

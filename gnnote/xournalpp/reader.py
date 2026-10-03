@@ -40,8 +40,8 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 from xml.parsers import expat
 
 from .. import pdfutil
-from ..codecutil import (BoundedZip, Counter, ensure_bytes, estimate_text_extent, image_pixel_size,
-                         inflate_limited, sniff_image)
+from ..codecutil import (MAX_COORD_PT, MAX_SIZE_PT, BoundedZip, Counter, ensure_bytes, estimate_text_extent,
+                         image_pixel_size, inflate_limited, sniff_image)
 from ..model import RGBA, Document, Image, Page, PdfBackground, Point, Stroke, TextBox, TextRun
 from . import (APPROXIMATED_STYLES, BACKGROUND_COLORS, DEFAULT_PAGE_SIZE, FILL_OUTLINE_WIDTH,
                NAMED_COLORS, PACKAGE_CONTENT, PAPER_FOR_STYLE)
@@ -56,6 +56,7 @@ MAX_PAGES = 10_000
 MAX_POINTS_PER_STROKE = 200_000
 MAX_TOTAL_POINTS = 5_000_000
 MAX_PAGE_SIDE = 1e6  # pt; anything larger (or not positive) is damage
+MAX_PDF_PAGE = 1_000_000  # background PDF page numbers from here on are damage (when the PDF has no page count)
 ROOT_TAGS = ("xournal", "MrWriter")
 TEXT_TAGS = frozenset(("stroke", "text", "image", "teximage", "link", "title"))
 BOILERPLATE_TITLES = ("Xournal++ document", "Xournal document")
@@ -335,6 +336,7 @@ _MESSAGES = {
     "bg_image_missing": "{n} page background images are stored outside the file and were dropped",
     "bg_image_format": "{n} page background images are neither PNG nor JPEG and were dropped",
     "pdf_page": "{n} pages refer to a page the background PDF does not have; plain paper was used",
+    "out_of_range": "{n} texts or images placed out of range were skipped",
 }
 
 
@@ -529,7 +531,7 @@ class _Reader:
             if not self.pdf_parsed:
                 self.pdf_missing = "A page refers to a background PDF the file never names; plain paper was used"
             return
-        if self.pdf_pages is not None and page_index >= self.pdf_pages:
+        if page_index >= (self.pdf_pages if self.pdf_pages is not None else MAX_PDF_PAGE):
             self.counts.add("pdf_page")
             return
         page.background = PdfBackground(self.pdf_id, page_index)
@@ -602,6 +604,7 @@ class _Reader:
         if not (math.isfinite(nominal) and nominal > 0):
             self.counts.add("bad_width")
             nominal = 1.0
+        nominal = min(nominal, MAX_SIZE_PT)
         coords = _number_list(node.text)
         points = [(coords[i], coords[i + 1]) for i in range(0, len(coords) - 1, 2)]
         if len(points) > MAX_POINTS_PER_STROKE:
@@ -661,13 +664,13 @@ class _Reader:
         for start, end in spans:
             run: List[Tuple[float, float, float]] = []
             for k in range(start, end + 1):
-                width = z[k] if k < end else z[end - 1]
+                width = min(z[k] if k < end else z[end - 1], MAX_SIZE_PT)
                 run.append((points[k][0], points[k][1], width))
             out.append(self.finite_points(run))
         return out
 
     def finite_points(self, run: Sequence[Tuple[float, float, float]]) -> List[Point]:
-        pts = [Point(x, y, w) for x, y, w in run if math.isfinite(x) and math.isfinite(y)]
+        pts = [Point(x, y, w) for x, y, w in run if abs(x) <= MAX_COORD_PT and abs(y) <= MAX_COORD_PT]
         if len(pts) != len(run):
             self.counts.add("dropped_points", len(run) - len(pts))
         return pts
@@ -697,11 +700,15 @@ class _Reader:
         else:
             x = _finite(a.get("x"), 0.0)
             y = _finite(a.get("y"), 0.0)
-        size *= scale
+        if not (abs(x) <= MAX_COORD_PT and abs(y) <= MAX_COORD_PT):
+            self.counts.add("out_of_range")
+            return None
+        size = min(size * scale, MAX_SIZE_PT)
         w, h = estimate_text_extent(content, size)
         wrap = _number(a.get("wrap"))
         if wrap is not None and math.isfinite(wrap) and wrap > 0:
             w = wrap * scale  # the wrap width is in the text's own (unscaled) coordinates
+        w, h = min(w, MAX_COORD_PT), min(h, MAX_COORD_PT)
         align = (a.get("align") or "left").strip().lower()
         if align not in ("left", "center", "right"):
             align = "left"
@@ -764,6 +771,12 @@ class _Reader:
         bottom = _finite(a.get("bottom"), top)
         return min(left, right), min(top, bottom), abs(right - left), abs(bottom - top), 0.0
 
+    def in_range(self, *values: float) -> bool:
+        if all(math.isfinite(v) and abs(v) <= MAX_COORD_PT for v in values):
+            return True
+        self.counts.add("out_of_range")
+        return False
+
     def image(self, page: Page, node: _Node) -> None:
         data = self.payload(node)
         if not data:
@@ -783,6 +796,8 @@ class _Reader:
                 self.counts.add("image_data")
                 return
             w, h = float(pixels[0]), float(pixels[1])
+        if not self.in_range(x, y, w, h):
+            return
         page.images.append(Image(x, y, w, h, data, fmt=fmt, rotation=rotation))
 
     def teximage(self, page: Page, node: _Node) -> None:
@@ -815,6 +830,8 @@ class _Reader:
             w, h = natural
         if w <= 0 or h <= 0:
             self.counts.add("image_data")
+            return
+        if not self.in_range(x, y, w, h):
             return
         page.images.append(Image(x, y, w, h, data, fmt=fmt, rotation=rotation))
 

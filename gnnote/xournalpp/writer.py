@@ -243,7 +243,8 @@ class _Writer:
 
     def matrix(self, image: Image, natural: Optional[Tuple[float, float]]) -> str:
         """`` matrix="..."`` for a rotated image (empty when unrotated or unmeasurable)."""
-        theta = math.radians(float(image.rotation or 0.0) % 360.0)
+        rotation = float(image.rotation or 0.0)
+        theta = math.radians(rotation % 360.0) if is_finite(rotation) else 0.0
         if abs(math.sin(theta)) < 1e-9 and math.cos(theta) > 0:
             return ""
         self.counts.add("rotated")
@@ -305,7 +306,8 @@ class _Writer:
                 self.counts.add("text_runs")
         attrs = (f'font={_attr(_font_name(box))} size="{_fmt(size)}" x="{_fmt(box.x)}" y="{_fmt(box.y)}" '
                  f'color="{_hex(color)}"')
-        theta = math.radians(float(box.rotation or 0.0) % 360.0)
+        rotation = float(box.rotation or 0.0)
+        theta = math.radians(rotation % 360.0) if is_finite(rotation) else 0.0
         if abs(math.sin(theta)) > 1e-9 or math.cos(theta) < 0:
             self.counts.add("rotated")
             c, s = math.cos(theta), math.sin(theta)
@@ -380,7 +382,9 @@ def write_xopp(doc: Document, options: Any = None) -> bytes:
     payload = xml.encode("utf-8")
     if pdf is None:
         return gzip.compress(payload, compresslevel=9, mtime=0)
-    stamp = (1980, 1, 1, 0, 0, 0) if _opt(options, "random_seed", None) is not None else time.localtime()[:6]
+    stamp = (1980, 1, 1, 0, 0, 0)  # ZIP time stamps start in 1980
+    if _opt(options, "random_seed", None) is None:
+        stamp = max(stamp, tuple(time.localtime()[:6]))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for name, data, method in (("mimetype", PACKAGE_MIMETYPE, zipfile.ZIP_STORED),

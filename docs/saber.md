@@ -90,8 +90,13 @@ background colour other than white becomes a generated paper PDF of that colour
 **Hardening.** BSON lengths are checked against their enclosing document before use, nesting
 is limited to 32 levels and the decoded values to 5 000 000; ZIP members are size-checked before
 inflating (256 MB per member, 1 GB per archive); JSON nested too deeply is a `ValueError`; at
-most 10 000 pages, 200 000 points per stroke and 5 000 000 per note. Only `ValueError` leaves
-`read_saber` (not a Saber note, unreadable BSON / JSON, over the size limit).
+most 10 000 pages, 200 000 points per stroke and 5 000 000 per note. Page sides outside
+1 .. 10^6 units and JSON integers too large for a float are treated as missing; stroke sizes
+are clamped to 1000 units, thinning to perfect-freehand's -1 .. 1; stroke points, shapes and
+images beyond 10^7 pt are skipped, widths and text sizes clamped to 10^4 pt. Every page,
+stroke, image and page text is converted on its own, so one damaged element costs only itself
+(warning). Only `ValueError` leaves `read_saber` (not a Saber note, unreadable BSON / JSON,
+over the size limit).
 
 ## 3. Writing (`writer.py`)
 

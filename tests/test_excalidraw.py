@@ -22,7 +22,7 @@ from gnnote.excalidraw.reader import read_excalidraw
 from gnnote.excalidraw.writer import build_scene, write_excalidraw
 from gnnote.goodnotes.reader import read_goodnotes
 from gnnote.goodnotes.writer import write_goodnotes
-from gnnote.model import Document, Page, Point, Stroke, TextBox, TextRun
+from gnnote.model import Document, Image, Page, Point, Stroke, TextBox, TextRun
 from gnnote.notability.reader import read_note
 from gnnote.notability.writer import write_note
 from tests.sample_docs import JPEG, full_document, png, stats
@@ -41,6 +41,17 @@ def _el(kind: str, **fields: Any) -> Dict[str, Any]:
             "strokeStyle": "solid", "roughness": 0, "opacity": 100, "isDeleted": False}
     base.update(fields)
     return base
+
+
+def _assert_bounded_and_writable(doc: Document) -> None:
+    """Extreme input values end up inside the model's bounds, and every writer accepts them."""
+    for page in doc.pages:
+        for s in page.strokes:
+            assert all(abs(p.x) <= 1e8 and abs(p.y) <= 1e8 and (p.width or 0) <= 1e4 for p in s.points)
+        assert all(t.size <= 1e4 and abs(t.x) <= 1e8 and abs(t.y) <= 1e8 and math.isfinite(t.rotation) for t in page.texts)
+        assert all(max(abs(i.x), abs(i.y), i.w, i.h) <= 1e8 and math.isfinite(i.rotation) for i in page.images)
+    for fmt in formats.writable():
+        assert fmt.write(doc, None)
 
 
 # --------------------------------------------------------------------------- width law
@@ -316,6 +327,39 @@ def test_hostile_values_are_tolerated():
     assert len(page.strokes) == 1 and [(p.x, p.y) for p in page.strokes[0].points][1] != (math.inf, 2)
     assert all(math.isfinite(p.x) for p in page.strokes[0].points)
     assert any("invalid coordinates" in w for w in doc.warnings) and any("colours" in w for w in doc.warnings)
+
+
+def test_huge_json_numbers_are_tolerated():
+    big = "1" + "0" * 400  # an integer too large for a float
+    raw = ('{"type": "excalidraw", "elements": [{"type": "freedraw", "x": %s, "y": 0, "points": [[0, 0], [1, 1]]},'
+           ' {"type": "freedraw", "x": 0, "y": 0, "points": [[0, 0], [%s, 1], [2, 2]], "strokeWidth": %s},'
+           ' {"type": "rectangle", "x": 0, "y": 0, "width": %s, "height": 10},'
+           ' {"type": "frame", "x": 0, "y": 0, "width": 1e300, "height": 50}]}') % ((big,) * 4)
+    doc = read_excalidraw(raw.encode())
+    assert len(doc.pages) == 1 and doc.pages[0].width < 100 and doc.pages[0].height < 100
+    assert [len(s.points) for s in doc.pages[0].strokes][:1] == [2]
+    assert any("invalid coordinates" in w for w in doc.warnings)
+
+
+def test_extreme_values_stay_in_range():
+    big = 1e300
+    elements = [_el("freedraw", points=[[0, 0], [5, 5]], pressures=[0.5, 1.0], strokeWidth=big, angle=1.7e308),
+                _el("rectangle", strokeWidth=big, backgroundColor="#ff0000"),
+                _el("text", text="hi", fontSize=big, lineHeight=big, angle=big)]
+    doc = read_excalidraw(_scene(elements))
+    assert len(doc.pages[0].strokes) == 3 and len(doc.pages[0].texts) == 1
+    _assert_bounded_and_writable(doc)
+
+
+def test_non_finite_values_never_reach_the_json():
+    page = Page(200, 200, images=[Image(0, 0, 10, 10, png(), rotation=float("nan"))],
+                texts=[TextBox(5, 5, 50, 10, "x", rotation=float("inf")), TextBox(5, 50, 50, 10, "y", size=1.5e308)])
+    doc = Document(pages=[page])
+    data = write_excalidraw(doc)
+    assert b"NaN" not in data and b"Infinity" not in data
+    scene = json.loads(data)
+    assert all(e["angle"] == 0 for e in scene["elements"])
+    assert any("out of range" in w for w in doc.warnings)
 
 
 @pytest.mark.parametrize("data", [b"", b"[]", b"{}", b'{"type": "other"}', b"\xff\xfe", b"not json",

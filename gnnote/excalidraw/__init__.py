@@ -25,6 +25,7 @@ LINE_HEIGHT = 1.25  # Excalidraw's line height for its sans-serif fonts
 FONT_NAMES: Dict[int, str] = {1: "Virgil", 2: "Helvetica", 3: "Cascadia", 5: "Excalifont", 6: "Nunito",
                               7: "Lilita One", 8: "Comic Shanns", 9: "Liberation Sans"}
 DEFAULT_FONT_FAMILY = 2
+DEFAULT_STROKE_COLOR = "#1e1e1e"  # restore()'s default for a missing strokeColor
 
 
 def thickness_factor(pressure: float) -> float:

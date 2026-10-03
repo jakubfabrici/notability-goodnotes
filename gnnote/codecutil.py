@@ -10,20 +10,23 @@ import io
 import math
 import zipfile
 import zlib
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from .geometry import flatten_bezier
 from .model import RGBA, Document, Point, Stroke
-from .notability.writer import exif_rotation, image_pixel_size, jpeg_exif_orientation
+from .notability.writer import image_pixel_size
 
-__all__ = ["MAX_MEMBER_BYTES", "MAX_TOTAL_BYTES", "FLATTEN_STEP_PT", "sniff_image", "image_pixel_size",
-           "jpeg_exif_orientation", "exif_rotation", "stroke_polyline", "clamp_rgba", "to_byte", "is_finite",
-           "estimate_text_extent", "bbox_matches", "Counter", "BoundedZip", "inflate_limited",
-           "ensure_bytes"]
+__all__ = ["MAX_MEMBER_BYTES", "MAX_TOTAL_BYTES", "FLATTEN_STEP_PT", "MAX_COORD_PT", "MAX_SIZE_PT",
+           "sniff_image", "image_pixel_size",
+           "stroke_polyline", "clamp_rgba", "to_byte", "is_finite", "estimate_text_extent", "bbox_matches",
+           "Counter", "BoundedZip", "inflate_limited", "ensure_bytes"]
 
 MAX_MEMBER_BYTES = 256 * 1024 * 1024  # declared (inflated) size above which a ZIP member is skipped
 MAX_TOTAL_BYTES = 1024 * 1024 * 1024  # inflated bytes one archive may hand out in total
 FLATTEN_STEP_PT = 1.0  # Bezier chains become polylines with about this spacing (pt)
+# The readers keep the model within these bounds, so every writer can store what they read:
+MAX_COORD_PT = 1e7  # coordinates and box sides (pt, 3.5 km) beyond this are damage and skipped
+MAX_SIZE_PT = 1e4  # stroke widths and font sizes (pt) above this are clamped to it
 TEXT_CHAR_WIDTH = 0.6  # em fraction used to guess a text box's width (as the GoodNotes writer does)
 TEXT_LINE_HEIGHT = 1.25  # line height in ems used to guess a text box's height
 
@@ -226,14 +229,8 @@ def inflate_limited(data: bytes, wbits: int, limit: int) -> Tuple[bytes, Optiona
                 pass
             return bytes(out[:limit]), "truncated"
         rest = d.unused_data
-        # trailing zero padding after the last gzip member is common and harmless
-        if not rest.strip(b"\x00"):
+        # like zlib's gzread, ignore whatever follows a member that is not another gzip member
+        # (trailing zero padding is common)
+        if rest[:2] != b"\x1f\x8b":
             break
     return bytes(out), None
-
-
-def first_of(items: Iterable[Optional[float]], default: float) -> float:
-    for item in items:
-        if item is not None and is_finite(item):
-            return float(item)
-    return default

@@ -54,6 +54,17 @@ def _with_siblings(path: Path) -> bytes:
     return _sba(path.read_bytes(), siblings) if siblings else path.read_bytes()
 
 
+def _assert_bounded_and_writable(doc: Document) -> None:
+    """Extreme input values end up inside the model's bounds, and every writer accepts them."""
+    for page in doc.pages:
+        for s in page.strokes:
+            assert all(abs(p.x) <= 1e8 and abs(p.y) <= 1e8 and (p.width or 0) <= 1e4 for p in s.points)
+        assert all(t.size <= 1e4 and abs(t.x) <= 1e8 and abs(t.y) <= 1e8 and math.isfinite(t.rotation) for t in page.texts)
+        assert all(max(abs(i.x), abs(i.y), i.w, i.h) <= 1e8 and math.isfinite(i.rotation) for i in page.images)
+    for fmt in formats.writable():
+        assert fmt.write(doc, None)
+
+
 # --------------------------------------------------------------------------- BSON
 
 
@@ -446,6 +457,43 @@ def test_hostile_values_are_tolerated():
     assert len(doc.pages) == 2
     assert all(math.isfinite(p.width) for p in doc.pages)
     assert any("newer than" in w for w in doc.warnings)
+
+
+def test_huge_json_numbers_and_absurd_values_are_tolerated():
+    big = "1" + "0" * 400  # an integer too large for a float
+    raw = ('{"v": 5, "l": %s, "w": %s, "z": [{"w": 1e-300, "h": 5, "s": [{"p": [{"x": %s, "y": 1, "p": %s},'
+           ' {"x": 1, "y": 2, "p": %s}, {"x": 2, "y": 3}], "s": %s, "t": 1e300}]}],'
+           ' "s": [{"i": 0, "p": [{"x": %s, "y": 0}, {"x": 1, "y": 1}]}]}') % ((big,) * 7)
+    doc = read_saber(raw.encode())
+    assert doc.pages[0].width == pytest.approx(1000 * PT_PER_UNIT)
+    widths = [p.width for s in doc.pages[0].strokes for p in s.points]
+    assert widths and all(math.isfinite(w) and 0 < w < 100 for w in widths)
+    assert any("invalid coordinates" in w for w in doc.warnings) and any("no valid size" in w for w in doc.warnings)
+
+
+def test_extreme_values_stay_in_range():
+    big = 1e300
+    note = {"v": 10, "l": 1000, "z": [{"w": 1000.0, "h": 1400.0, "s": [
+        {"p": [{"x": big, "y": 0, "p": 0.5}, {"x": 1, "y": 1, "p": 1}, {"x": 2, "y": 2}], "s": big},
+        {"shape": "circle", "cx": 10.0, "cy": 10.0, "r": big}, {"shape": "rect", "rl": big, "rt": 0, "rw": 5, "rh": 5}],
+        "i": [{"x": big, "y": 0.0, "w": 10.0, "h": 10.0, "b": list(png())}],
+        "q": [{"insert": "\n" * 100000 + "deep\n"}]}]}
+    doc = read_saber(json.dumps(note).encode())
+    assert len(doc.pages[0].strokes) == 1 and not doc.pages[0].images and len(doc.pages[0].texts) == 1
+    joined = " | ".join(doc.warnings)
+    assert "invalid coordinates" in joined and "shapes without" in joined and "images without" in joined
+    _assert_bounded_and_writable(doc)
+
+
+def test_writer_bounds_far_away_text_images_and_tiny_pages():
+    doc = Document(pages=[Page(500, 700, texts=[TextBox(10, 1e12, 100, 20, "far"), TextBox(10, 1e308, 100, 20, "farther")],
+                               images=[Image(1e308, 0, 10, 10, png())]),
+                          Page(1e-300, 100)])
+    note = bson.decode(build_note(doc)[0])
+    newlines = sum(op["insert"].count("\n") for op in note["z"][0]["q"])
+    assert newlines < 100 and "i" not in note["z"][0]
+    assert note["z"][1]["w"] == 1000.0 and math.isfinite(note["z"][1]["h"])
+    assert len(read_saber(write_saber(doc)).pages[0].texts) == 1
 
 
 def test_deeply_nested_json_is_a_value_error():

@@ -37,9 +37,12 @@ checked in the app.
 or entity declaration (so no entity can expand; `<!DOCTYPE` is refused with `ValueError`),
 limits nesting to 64 levels, 2 000 000 elements, 200 000 points per stroke and 5 000 000 points
 per file, and converts every `<page>` as soon as it closes. gzip input inflates to at most
-256 MB (`MAX_XML_BYTES`, `ValueError` beyond); ZIP members are size-checked before inflating
-(256 MB per member, 1 GB per archive). Damaged or truncated files keep every element that was
-complete before the damage, with one warning, as Xournal++ does. Only `ValueError` leaves
+256 MB (`MAX_XML_BYTES`, `ValueError` beyond; bytes after the last gzip member that do not
+start another one are ignored, as zlib's `gzread` does); ZIP members are size-checked before
+inflating (256 MB per member, 1 GB per archive). Damaged or truncated files keep every element
+that was complete before the damage, with one warning, as Xournal++ does. Values stay in the
+range every writer can store: stroke points, texts and images beyond 10^7 pt are skipped
+(warning), stroke widths and font sizes are clamped to 10^4 pt. Only `ValueError` leaves
 `read_xopp` (not a Xournal++ file, refused DTD, over the size limit).
 
 **Units.** PDF points, origin at the page's top-left corner, y down: coordinates and widths
