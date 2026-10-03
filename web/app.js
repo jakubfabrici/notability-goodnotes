@@ -145,8 +145,22 @@ function readableExtensions() {
   return FORMATS.filter((f) => f.readable).flatMap((f) => f.inputExtensions);
 }
 
+// Zipped notes are accepted too: iOS shares a CollaNote package (a folder) as "Name.cnote.zip",
+// and the converter recognises the app from the content whatever the file is called.
+const ZIP_EXTENSION = ".zip";
+
+function isZipName(name) {
+  return String(name || "").toLowerCase().endsWith(ZIP_EXTENSION);
+}
+
+function withoutZip(name) {
+  const text = String(name || "");
+  return isZipName(text) ? text.slice(0, -ZIP_EXTENSION.length) : text;
+}
+
+/** The format a file name announces ("Name.cnote.zip" counts as .cnote); null when unknown. */
 function sourceFormatOf(name) {
-  const lower = String(name || "").toLowerCase();
+  const lower = withoutZip(name).toLowerCase();
   const fmt = FORMATS.find((f) => f.readable && f.inputExtensions.some((ext) => lower.endsWith(ext)));
   return fmt ? fmt.id : null;
 }
@@ -245,10 +259,10 @@ function acceptFile(file) {
   show(el.result, false);
   state.last = null;
   if (!file) return;
-  if (!sourceFormatOf(file.name)) {
+  if (!sourceFormatOf(file.name) && !isZipName(file.name)) {
     state.file = null;
     show(el.fileInfo, false);
-    el.fileError.textContent = t("file.badext", { list: readableExtensions().join(", ") });
+    el.fileError.textContent = t("file.badext", { list: readableExtensions().concat(ZIP_EXTENSION).join(", ") });
     show(el.fileError, true);
     updateConvertButton();
     return;
@@ -502,7 +516,7 @@ async function convertViaServer(file, options) {
       name = hinted;
     }
   }
-  const src = sourceFormatOf(file.name);
+  const src = r.headers.get("X-GnNote-Source-Format") || sourceFormatOf(file.name);
   const srcFmt = formatById(src);
   const target = options.target || (srcFmt && srcFmt.defaultTarget) || "notability";
   if (!name) name = swapExtension(file.name, target);
@@ -519,10 +533,10 @@ async function convertViaServer(file, options) {
 function swapExtension(name, target) {
   const dst = formatById(target);
   const src = formatById(sourceFormatOf(name));
-  let stem = name;
+  let stem = withoutZip(name);
   if (src) {
-    const ext = src.inputExtensions.find((e) => name.toLowerCase().endsWith(e));
-    if (ext) stem = name.slice(0, name.length - ext.length);
+    const ext = src.inputExtensions.find((e) => stem.toLowerCase().endsWith(e));
+    if (ext) stem = stem.slice(0, stem.length - ext.length);
   }
   return stem + (dst ? dst.extension : "");
 }
