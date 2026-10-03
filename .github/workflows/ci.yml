@@ -47,13 +47,16 @@ jobs:
           import shutil, sys
           from pathlib import Path
           sys.path.insert(0, ".")
-          from tests.conftest import REPOS, SPARSE, clone_pinned
+          from tests.conftest import LARGE, REPOS, SPARSE, clone_pinned
           root = Path("tests/.samples")
           root.mkdir(parents=True, exist_ok=True)
           for name, (url, sha) in REPOS.items():
               target = root / name
               if target.is_dir():
                   print("present:", name)
+                  continue
+              if name in LARGE:
+                  print("skipped (large download):", name)
                   continue
               try:
                   clone_pinned(target, url, sha, SPARSE.get(name))
