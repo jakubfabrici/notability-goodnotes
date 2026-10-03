@@ -399,7 +399,7 @@ class _Writer:
             size = run.size if isinstance(run.size, (int, float)) and run.size and math.isfinite(run.size) \
                 and run.size > 0 else default_size
             attrs: Dict[int, Any] = {
-                1: font_family(run.font), 10: float(size) * U, 2: bool(run.bold), 3: bool(run.italic),
+                1: sanitise_text(font_family(run.font)), 10: float(size) * U, 2: bool(run.bold), 3: bool(run.italic),
                 4: 1 if run.underline else 0, 6: _clamp_rgba(run.color or box.color or (0.0, 0.0, 0.0, 1.0)),
                 8: align,
             }

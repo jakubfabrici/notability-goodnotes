@@ -258,6 +258,14 @@ def test_lossy_steps_warn() -> None:
     assert len(read_noteful(write_noteful(empty)).pages) == 1 and any("no pages" in w for w in empty.warnings)
 
 
+def test_lone_surrogates_are_replaced() -> None:
+    box = TextBox(10, 10, 100, 20, "a\ud800b", runs=[TextRun("a\ud800b", font="Odd\udfffFont")])
+    doc = Document(title="t\udfffx", pages=[Page(300, 400, texts=[box])])
+    back = read_noteful(write_noteful(doc, Seeded()))
+    assert back.title == "t�x" and back.pages[0].texts[0].text == "a�b"
+    assert back.pages[0].texts[0].runs[0].font == "Odd�Font"
+
+
 def test_exif_photos_and_stretched_pdf_pages_warn() -> None:
     exif = b"\xff\xd8\xff\xe1" + struct.pack(">H", 2 + 6 + 8 + 2 + 12) + b"Exif\x00\x00" + b"MM\x00*" + \
         struct.pack(">I", 8) + struct.pack(">H", 1) + struct.pack(">HHIHH", 0x0112, 3, 1, 6, 0) + jpeg()[2:]
