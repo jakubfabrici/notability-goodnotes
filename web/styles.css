@@ -95,6 +95,18 @@ body {
 
 .brand h1 { font-size: 22px; margin: 0; letter-spacing: 0.2px; }
 
+.lang select {
+  font: inherit;
+  font-size: 15px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent);
+  max-width: 46vw;
+}
+.lang select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .logo {
   width: 30px; height: 30px; border-radius: 8px;
   background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M7 20c4-10 8 4 12-6s5 2 7 0' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") center/100% no-repeat;
@@ -209,6 +221,20 @@ body {
   color: var(--text);
 }
 .number input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.number select {
+  flex: none;
+  min-width: 140px;
+  max-width: 60%;
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.number select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.number:has(#target) { margin-bottom: 10px; }
+.supported { font-size: 13px; }
 
 /* buttons */
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }

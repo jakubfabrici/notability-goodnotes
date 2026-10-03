@@ -10,15 +10,26 @@ never modified: :meth:`SampleSet.repo_commit` tells the tests which commit it is
 :meth:`SampleSet.expected_for` withholds exact per-file expectations from a repository that
 sits at a different commit (the invariants still apply).  Tests that need a repository
 that is unavailable are skipped; ``GNNOTE_OFFLINE=1`` disables cloning.
+
+Single files too large for every test run (:data:`LARGE_FILES`, e.g. a 100 MB notebook kept
+in Git LFS) are used when they sit directly under the samples directory, and downloaded
+there from a URL naming a pinned commit only when ``GNNOTE_LARGE_SAMPLES=1`` is set (and
+``GNNOTE_OFFLINE`` is not); a file is used only when its size and SHA-256 match the pin.
+CI never sets the variable, so those tests skip there.
+
+Some sample repositories carry no licence (``YTU-Archive``, ``Flashcard`` and the notebook
+in :data:`LARGE_FILES`): their files are test inputs fetched at test time only and are
+never committed to this repository.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Tuple, TypeVar
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple, TypeVar
 
 import pytest
 
@@ -49,6 +60,87 @@ REPOS: Dict[str, Tuple[str, str]] = {
                  "f16eb8d2a425637aab629e6cc90c00a18f17009f"),
     "denotability": ("https://github.com/miroreo/denotability",
                      "7c44cfd5627b4875b7bcbd262c3997fb130b001e"),
+    # CollaNote notes (no licence; test input only): 7 ZIP notes and 3 format-2 packages
+    # of 2025-2026 over lecture slides, in 1-2/Semiconductor/slide.
+    "YTU-Archive": ("https://github.com/enisogdum/YTU-Archive",
+                    "81e30df7e8f54a4d7a178eb0baef97f56c12d0e2"),
+    # Cards.cards (no licence; test input only): a bplist holding 854 PencilKit drawings
+    # written on iOS (lasso transforms, deleted strokes, one version-2 drawing).
+    "Flashcard": ("https://github.com/r987r/Flashcard",
+                  "f74f6e8df09265f5a0f3cd2def49a5d9353bd40d"),
+    # Flexcil: forms.flx (MIT repository); only the top-level files are needed
+    "flexcil-backup-viewer": ("https://github.com/janptn/flexcil-backup-viewer",
+                              "8b1c30f432a34ef315ef669cf5eb87a589ae6394"),
+    # Flexcil: an MIT Python codec, run in a subprocess as a test oracle
+    "flexcil-codex-plugin": ("https://github.com/jeonghyeon-net/flexcil-codex-plugin",
+                             "b04abb543d72031e2c1be2ef7c7fc5bd52585c30"),
+    # reMarkable: rmscene (MIT) is the v6 oracle (subprocess) and holds sample pages; rmc (MIT)
+    # holds more pages; RM-Sticker-Press (GPL-3.0) is used only for its .rmdoc sample files,
+    # read as external test data (never copied into this repository)
+    "rmscene": ("https://github.com/ricklupton/rmscene", "d7d86ca3a8ca4965d911886a1660bc8acf654c1a"),
+    "rmc": ("https://github.com/ricklupton/rmc", "da87813a31496d156ca6ea8a27bf5128670fb45a"),
+    "RM-Sticker-Press": ("https://github.com/szainababbas/RM-Sticker-Press",
+                         "4ecc7387a07ca384e62cfefd1d670a548cea5314"),
+    # The Saber (GPL-3.0) and Xournal++ (GPL-2.0) app repositories are used only for their
+    # test files, as external test data fetched here; none of their files or code is part of
+    # gnnote.
+    "saber": ("https://github.com/saber-notes/saber",
+              "f143d84b46cb6faf795b13c00aee6d31f69e5da9"),
+    "xournalpp": ("https://github.com/xournalpp/xournalpp",
+                  "9882ffaaf2c012a1de4c33161eb4284468d84b9d"),
+    # OneNote sample sections (docs/onenote.md): MPL-2.0 / AGPL / LGPL / MIT / Apache-2.0
+    # files used only as external test data, never copied into this repository.
+    "onenote.rs": ("https://github.com/msiemens/onenote.rs",
+                   "fa4d7a044324af3bfe68727704a9789a08b36a3c"),
+    "joplin": ("https://github.com/laurent22/joplin",
+               "b04a5f04890a71c8929db4b0ccd45369ea983ae4"),
+    "Interop-TestSuites": ("https://github.com/OfficeDev/Interop-TestSuites",
+                           "fe87ed3253de01804a2ae6e1d0015943da6023f8"),
+    "libmson": ("https://github.com/blu-base/libmson",
+                "37bc22d6c98f17eac451c4330aac494e60990a6c"),
+    "obsidian-importer": ("https://github.com/obsidianmd/obsidian-importer",
+                          "d2cb052c365999118c75c998254fcbb1c15a13fe"),
+    "py-onenote-parser": ("https://github.com/Kev744/py-onenote-parser",
+                          "04c935cd79c5290e758418817d792f18c33c4fbe"),
+}
+
+# Repositories too large to check out whole: only these directories are checked out (a
+# partial clone without blobs plus a cone-mode sparse checkout, so only their files are
+# downloaded; cone mode also brings the files directly in each listed directory's parents).
+# Repositories not listed here are checked out completely.
+SPARSE: Dict[str, Tuple[str, ...]] = {
+    "flexcil-backup-viewer": ("puplic",),  # cone mode adds the top-level files, forms.flx among them
+    "flexcil-codex-plugin": ("plugins/flexcil-codex-plugin/src",),
+    "rmscene": ("src", "tests/data"),
+    "rmc": ("tests/rm",),
+    "RM-Sticker-Press": ("RM-sticker-press/samples",),
+    "YTU-Archive": ("1-2/Semiconductor/slide",),  # 63 MB of a much larger repository
+    "saber": ("test/sbn_examples", "test/demo_notes"),
+    "xournalpp": ("test/files/load", "test/files/packaged_xopp"),
+    "onenote.rs": ("crates/parser/tests/samples",),
+    "joplin": ("packages/onenote-converter/test-data",),
+    "Interop-TestSuites": ("FileSyncandWOPI/Source/MS-ONESTORE/TestSuite/Resources",),
+    "libmson": ("resources",),
+    "obsidian-importer": ("tests/onenote-file/fixtures",),
+}
+
+# Repositories whose download is large (their sample sits at the top level, so a sparse
+# checkout cannot leave it out): used when present under $GNNOTE_SAMPLES, cloned only with
+# GNNOTE_LARGE_SAMPLES=1 (CI skips them), so the tests that need them usually skip.
+LARGE: Dict[str, str] = {
+    "py-onenote-parser": "a 46 MB OneNote section (performance test)",
+}
+
+# name -> (URL at a pinned commit, SHA-256, size in bytes); see the module docstring.
+LARGE_FILES: Dict[str, Tuple[str, str, int]] = {
+    # Kinjalrk2k/100-Days-of-Machine-Learning-Campus-X @ 22642ef, _backup/Notes.cnote (Git LFS,
+    # no licence; test input only): a 112-page CollaNote notebook on lined paper, without PDFs.
+    "collanote-notebook.cnote": (
+        "https://media.githubusercontent.com/media/Kinjalrk2k/100-Days-of-Machine-Learning-Campus-X/"
+        "22642ef38b5c61baa48446cb406ebd56c0870f2b/_backup/Notes.cnote",
+        "66ac18e02f18fddf83015247d41f6919a8de0f84cd6ed51c33551ce0f5061445",
+        100_110_925,
+    ),
 }
 
 
@@ -65,13 +157,15 @@ def _find_repo(root: Path, name: str) -> Optional[Path]:
     return None
 
 
-def clone_pinned(target: Path, url: str, sha: str, timeout: float = 300.0) -> None:
+def clone_pinned(target: Path, url: str, sha: str, sparse: Optional[Sequence[str]] = None,
+                 timeout: float = 300.0) -> None:
     """Check out exactly commit ``sha`` of ``url`` into the new directory ``target``.
 
     Uses a shallow fetch of the single commit (GitHub serves any full SHA that way) and
     falls back to fetching the whole history when the server refuses an unadvertised
-    object.  Raises ``subprocess.CalledProcessError`` / ``OSError`` on failure; the
-    directory is left to the caller to clean up.
+    object.  ``sparse`` (see :data:`SPARSE`) limits the checkout to those directories and
+    fetches no other file contents.  Raises ``subprocess.CalledProcessError`` / ``OSError``
+    on failure; the directory is left to the caller to clean up.
     """
     def git(*args: str) -> None:
         subprocess.run(["git", "-C", str(target), *args], check=True, timeout=timeout, capture_output=True)
@@ -79,10 +173,14 @@ def clone_pinned(target: Path, url: str, sha: str, timeout: float = 300.0) -> No
     target.mkdir(parents=True, exist_ok=False)
     subprocess.run(["git", "init", "-q", str(target)], check=True, timeout=timeout, capture_output=True)
     git("remote", "add", "origin", url)
+    blobs: Tuple[str, ...] = ()
+    if sparse:
+        git("sparse-checkout", "set", "--cone", *sparse)
+        blobs = ("--filter=blob:none",)  # the checkout then fetches only the sparse files
     try:
-        git("fetch", "-q", "--depth", "1", "origin", sha)
+        git("fetch", "-q", "--depth", "1", *blobs, "origin", sha)
     except subprocess.CalledProcessError:
-        git("fetch", "-q", "origin")
+        git("fetch", "-q", *blobs, "origin")
         git("checkout", "-q", "--detach", sha)
         return
     git("checkout", "-q", "--detach", "FETCH_HEAD")
@@ -91,14 +189,52 @@ def clone_pinned(target: Path, url: str, sha: str, timeout: float = 300.0) -> No
 def _clone(root: Path, name: str) -> Optional[Path]:
     if os.environ.get("GNNOTE_OFFLINE"):
         return None
+    if name in LARGE and not os.environ.get("GNNOTE_LARGE_SAMPLES"):
+        return None
     target = root / name
     url, sha = REPOS[name]
     try:
-        clone_pinned(target, url, sha)
+        clone_pinned(target, url, sha, SPARSE.get(name))
     except Exception:  # noqa: BLE001 - offline, blocked or git missing; the caller skips
         shutil.rmtree(target, ignore_errors=True)
         return None
     return target
+
+
+def fetch_large_file(target: Path, url: str, sha256: str, size: int, timeout: float = 600.0) -> None:
+    """Download ``url`` to ``target``; keep it only when its size and SHA-256 match the pin.
+
+    Raises ``OSError`` / ``ValueError`` on failure (no partial file is left behind).
+    """
+    import urllib.request
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    part = target.with_name(target.name + ".part")
+    digest = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response, open(part, "wb") as out:
+            while True:
+                chunk = response.read(1 << 20)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                out.write(chunk)
+                if out.tell() > size:
+                    raise ValueError(f"{url} is larger than the pinned {size} bytes")
+        if part.stat().st_size != size or digest.hexdigest() != sha256:
+            raise ValueError(f"{url} does not match its pinned SHA-256")
+        part.replace(target)
+    finally:
+        if part.exists():
+            part.unlink()
+
+
+def _sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _git_head(path: Path) -> Optional[str]:
@@ -124,6 +260,7 @@ class SampleSet:
     def __init__(self, root: Path):
         self.root = root
         self._commits: Dict[str, Optional[str]] = {}
+        self._large: Dict[str, bool] = {}
 
     def repo(self, name: str) -> Path:
         found = _find_repo(self.root, name) or _clone(self.root, name)
@@ -159,7 +296,11 @@ class SampleSet:
         name = self.repo_name_of(path)
         if name is not None and self.at_pinned_commit(name) is False:
             return None
-        return table.get(Path(path).name)
+        import unicodedata
+
+        base = Path(path).name
+        found = table.get(base)
+        return found if found is not None else table.get(unicodedata.normalize("NFC", base))  # macOS: NFD names
 
     def goodnotes_files(self) -> List[Path]:
         files: List[Path] = []
@@ -184,10 +325,121 @@ class SampleSet:
             pytest.skip("no .note sample files available")
         return files
 
+    def nebo_files(self) -> List[Path]:
+        """MyScript Notes / Nebo packages: inkterop's CC0 fixtures."""
+        files = sorted((self.repo("inkterop") / "core" / "tests" / "fixtures" / "nebo").glob("*.nebo"))
+        if not files:
+            pytest.skip("no .nebo sample files available")
+        return files
+
+    def flexcil_files(self) -> List[Path]:
+        """Flexcil documents: forms.flx of flexcil-backup-viewer."""
+        files = sorted(p for p in self.repo("flexcil-backup-viewer").glob("*.flx") if p.is_file())
+        if not files:
+            pytest.skip("no .flx sample files available")
+        return files
+
+    def remarkable_pages(self) -> List[Path]:
+        """reMarkable v6 pages: rmscene's and rmc's test pages and inkterop's CC0 captures."""
+        files: List[Path] = []
+        for name, sub in (("rmscene", "tests/data"), ("rmc", "tests/rm"),
+                          ("inkterop", "core/tests/fixtures/remarkable")):
+            try:
+                files += sorted((self.repo(name) / sub).glob("*.rm"))
+            except pytest.skip.Exception:
+                pass
+        if not files:
+            pytest.skip("no .rm sample files available")
+        return files
+
+    def remarkable_documents(self) -> List[Path]:
+        """reMarkable .rmdoc documents: RM-Sticker-Press's samples (external test data)."""
+        files = sorted((self.repo("RM-Sticker-Press") / "RM-sticker-press" / "samples").glob("*.rmdoc"))
+        if not files:
+            pytest.skip("no .rmdoc sample files available")
+        return files
+
+    def xournalpp_files(self) -> List[Path]:
+        """Xournal++'s own test files (``test/files``): gzip, plain-XML and ZIP-packaged."""
+        root = self.repo("xournalpp") / "test" / "files"
+        files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix in (".xopp", ".xoj"))
+        if not files:
+            pytest.skip("no Xournal++ sample files available")
+        return files
+
+    def saber_files(self) -> List[Path]:
+        """Saber's own example notes (``test/sbn_examples``, ``test/demo_notes``)."""
+        root = self.repo("saber") / "test"
+        files = sorted(p for sub in ("sbn_examples", "demo_notes") for p in (root / sub).glob("*")
+                       if p.is_file() and p.suffix in (".sbn", ".sbn2"))
+        if not files:
+            pytest.skip("no Saber sample files available")
+        return files
+
+    def inkterop_fixture(self, *parts: str) -> Path:
+        """A CC0 fixture of inkterop (``core/tests/fixtures/...``)."""
+        path = self.repo("inkterop").joinpath("core", "tests", "fixtures", *parts)
+        if not path.is_file():
+            pytest.skip(f"inkterop fixture {'/'.join(parts)} not available")
+        return path
+
+    # (repository, sample directory) of the OneNote sections, both packagings
+    ONENOTE_DIRS = (("onenote.rs", "crates/parser/tests/samples"), ("joplin", "packages/onenote-converter/test-data"),
+                    ("Interop-TestSuites", "FileSyncandWOPI/Source/MS-ONESTORE/TestSuite/Resources"),
+                    ("libmson", "resources"), ("obsidian-importer", "tests/onenote-file/fixtures"),
+                    ("py-onenote-parser", "."))
+
+    def onenote_files(self, pattern: str = "*.one") -> List[Path]:
+        """Every OneNote sample file of the available repositories (``LARGE`` ones only when
+        present).  Includes the encrypted section and two Git LFS pointer files (not OneNote)."""
+        files: List[Path] = []
+        for name, sub in self.ONENOTE_DIRS:
+            try:
+                base = self.repo(name) / sub
+            except pytest.skip.Exception:
+                continue
+            files += sorted(p for p in base.rglob(pattern) if p.is_file() and ".git" not in p.parts)
+        if not files:
+            pytest.skip("no OneNote sample files available")
+        return files
+
     def notability_template(self) -> Path:
         path = self.repo("notability-to-svg") / "example.note"
         if not path.is_file():
             pytest.skip("Notability 10.4 template note not available")
+        return path
+
+    def collanote_notes(self) -> List[Path]:
+        """YTU-Archive's CollaNote notes: ``.cnote`` ZIP files and format-2 package directories."""
+        folder = self.repo("YTU-Archive") / "1-2" / "Semiconductor" / "slide"
+        notes = sorted(folder.glob("*.cnote")) if folder.is_dir() else []
+        if not notes:
+            pytest.skip("no CollaNote sample notes available")
+        return notes
+
+    def pkdrawing_fixtures(self) -> List[Path]:
+        """inkterop's PencilKit fixtures (CC0), each next to its ``.truth.json``."""
+        folder = self.repo("inkterop") / "core" / "tests" / "fixtures" / "pkdrawing"
+        blobs = sorted(folder.glob("*.pkdrawing")) if folder.is_dir() else []
+        if not blobs:
+            pytest.skip("inkterop PencilKit fixtures not available")
+        return blobs
+
+    def large_file(self, name: str) -> Path:
+        """A :data:`LARGE_FILES` entry, verified against its pin (downloaded on request)."""
+        url, sha256, size = LARGE_FILES[name]
+        path = self.root / name
+        if not path.is_file():
+            if os.environ.get("GNNOTE_OFFLINE") or not os.environ.get("GNNOTE_LARGE_SAMPLES"):
+                pytest.skip(f"large sample {name} not available (GNNOTE_LARGE_SAMPLES=1 downloads it)")
+            try:
+                fetch_large_file(path, url, sha256, size)
+            except Exception as exc:  # noqa: BLE001 - offline or blocked: skip
+                pytest.skip(f"large sample {name} could not be downloaded ({exc})")
+        if name not in self._large:
+            self._large[name] = path.stat().st_size == size and _sha256_of(path) == sha256
+        if not self._large[name]:
+            pytest.skip(f"{path} does not match the pinned SHA-256 of {name}")
         return path
 
 
@@ -207,6 +459,9 @@ def pytest_report_header(config: pytest.Config) -> List[str]:
         else:
             state = f"{commit[:7]} (pinned commit is {sha[:7]}; exact per-file expectations withheld)"
         lines.append(f"  {name}: {state}")
+    for name in LARGE_FILES:
+        if (root / name).is_file():
+            lines.append(f"  {name}: present (checked against its pinned SHA-256 when used)")
     if lines:
         lines.insert(0, f"reference samples: {root}")
     return lines

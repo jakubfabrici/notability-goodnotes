@@ -441,10 +441,12 @@ def displayed_box(image: Image, ctx: Optional[_Context] = None) -> Tuple[float, 
     """``(x, y, w, h)`` in pt of the box GoodNotes should hold for ``image``.
 
     GoodNotes has no verified rotation field for images; it does, however, turn a JPEG by its
-    EXIF orientation and stores the *displayed* (rotated) size in ``#2``.  So a JPEG whose
-    EXIF orientation prescribes the same quarter-turn as ``image.rotation`` keeps its bytes
-    and gets the box rotated about its centre; any other rotation is dropped (native box).
-    ``ctx`` receives the counted warnings.
+    EXIF orientation and stores the *displayed* (rotated) size in ``#2``.  The model uses the
+    same convention for such a photo (design.md 4.1: the box is the displayed box and
+    ``image.rotation`` says how the raw pixels turn to fill it), so a JPEG whose EXIF
+    orientation prescribes the same quarter-turn as ``image.rotation`` keeps its bytes and its
+    box as they are; any other rotation is dropped (box unchanged).  ``ctx`` receives the
+    counted warnings.
     """
     x, y, w, h = float(image.x), float(image.y), float(image.w), float(image.h)
     rotation = float(image.rotation or 0.0) % 360.0
@@ -454,10 +456,7 @@ def displayed_box(image: Image, ctx: Optional[_Context] = None) -> Tuple[float, 
     if exif is not None and abs(exif - rotation) < 1e-6 and exif != 0.0:
         if ctx is not None:
             ctx.count("image_exif")
-        if exif in (90.0, 270.0):
-            cx, cy = x + w / 2.0, y + h / 2.0
-            return cx - h / 2.0, cy - w / 2.0, h, w
-        return x, y, w, h  # 180 degrees: same box
+        return x, y, w, h
     if ctx is not None:
         ctx.count("image_rotation")
     return x, y, w, h

@@ -7,24 +7,32 @@
 // pyodide/ directory when pyodide/pyodide.mjs answers a HEAD request
 // (vendored build), else from the jsDelivr CDN.
 
-import { t, applyLanguage, initialLang, rememberLang, currentLang } from "./i18n.js";
+import { t, applyLanguage, initialLang, rememberLang, currentLang, LANGS, LANG_NAMES } from "./i18n.js";
+import { FORMATS } from "./formats.js";
 
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
-const EXT_RE = /\.(goodnotes|note)$/i;
 const STAT_ORDER = ["pages", "strokes", "images", "texts", "pdfs"];
+// target format -> element holding the options that only apply to it
+const TARGET_OPTIONS = { notability: "opts-notability", pdf: "opts-pdf" };
+const MIME_TYPES = {
+  notability: "application/x-notability-note",
+  goodnotes: "application/x-goodnotes",
+  pdf: "application/pdf",
+};
 
 const $ = (id) => document.getElementById(id);
 const el = {
-  langToggle: $("lang-toggle"),
+  lang: $("lang"),
   dropzone: $("dropzone"),
   file: $("file"),
   choose: $("choose"),
   fileInfo: $("file-info"),
   fileName: $("file-name"),
   fileDirection: $("file-direction"),
+  target: $("target"),
+  supported: $("supported"),
   fileError: $("file-error"),
-  paperFieldset: $("paper-fieldset"),
-  paperNa: $("paper-na"),
+  optsNone: $("opts-none"),
   pressure: $("pressure"),
   simplify: $("simplify"),
   convert: $("convert"),
@@ -129,17 +137,82 @@ function setEngineStatus() {
   el.engineStatus.textContent = t(key);
 }
 
+function formatById(id) {
+  return FORMATS.find((f) => f.id === id) || null;
+}
+
+// A .zip is accepted as well: OneDrive downloads a OneNote notebook folder as one, and a
+// renamed note file may end in .zip too. The converter recognises the format by content.
+const CONTAINER_EXTENSIONS = [".zip"];
+// Not advertised, but passed on: the converter cannot read a OneNote .onepkg package and
+// answers with how to download the notebook as a .zip instead.
+const EXPLAINED_EXTENSIONS = [".onepkg"];
+
+function readableExtensions() {
+  return FORMATS.filter((f) => f.readable).flatMap((f) => f.inputExtensions);
+}
+
+// iOS shares a CollaNote package (a folder) as "Name.cnote.zip": the name before ".zip" still
+// tells the app.
+const ZIP_EXTENSION = CONTAINER_EXTENSIONS[0];
+
+function isZipName(name) {
+  return String(name || "").toLowerCase().endsWith(ZIP_EXTENSION);
+}
+
+function withoutZip(name) {
+  const text = String(name || "");
+  return isZipName(text) ? text.slice(0, -ZIP_EXTENSION.length) : text;
+}
+
+function containerExtensionOf(name) {
+  const lower = String(name || "").toLowerCase();
+  return CONTAINER_EXTENSIONS.concat(EXPLAINED_EXTENSIONS).find((ext) => lower.endsWith(ext)) || null;
+}
+
+/** The format a file name announces ("Name.cnote.zip" counts as .cnote); null when unknown. */
 function sourceFormatOf(name) {
-  const m = EXT_RE.exec(name || "");
-  if (!m) return null;
-  return m[1].toLowerCase() === "goodnotes" ? "goodnotes" : "notability";
+  const lower = withoutZip(name).toLowerCase();
+  const fmt = FORMATS.find((f) => f.readable && f.inputExtensions.some((ext) => lower.endsWith(ext)));
+  return fmt ? fmt.id : null;
+}
+
+/** Fill the "Convert to" list for a source format, keeping the previous choice when possible. */
+function populateTargets(source) {
+  const previous = el.target.value;
+  el.target.textContent = "";
+  for (const f of FORMATS) {
+    if (!f.writable || f.id === source) continue;
+    const opt = document.createElement("option");
+    opt.value = f.id;
+    opt.textContent = f.name;
+    el.target.appendChild(opt);
+  }
+  const ids = Array.from(el.target.options, (o) => o.value);
+  const src = formatById(source);
+  const wanted = [previous, src && src.defaultTarget, "notability"].find((id) => id && ids.includes(id));
+  if (wanted) el.target.value = wanted;
+}
+
+function updateDirection() {
+  const src = formatById(state.file ? sourceFormatOf(state.file.name) : null);
+  const dst = formatById(el.target.value);
+  el.fileDirection.textContent = src && dst ? t("file.direction", { from: src.name, to: dst.name }) : "";
+  const group = dst ? TARGET_OPTIONS[dst.id] : null;
+  for (const id of Object.values(TARGET_OPTIONS)) show($(id), id === group);
+  show(el.optsNone, !!dst && !group);
 }
 
 function readOptions() {
   const paper = (document.querySelector('input[name="paper"]:checked') || {}).value || "plain";
   let simplify = parseFloat(el.simplify.value);
   if (!isFinite(simplify) || simplify < 0) simplify = 0;
-  return { paper: paper, pressure: !!el.pressure.checked, simplify: simplify };
+  const options = { paper: paper, pressure: !!el.pressure.checked, simplify: simplify };
+  if (el.target.value) options.target = el.target.value;
+  if (options.target === "pdf") {
+    options.pdf_ink = (document.querySelector('input[name="pdf_ink"]:checked') || {}).value || "flatten";
+  }
+  return options;
 }
 
 function updateConvertButton() {
@@ -159,24 +232,37 @@ function setLanguage(lang) {
   applyLanguage(lang);
   rememberLang(lang);
   setEngineStatus();
+  renderSupported();
   if (state.file) describeFile(state.file);
   if (state.last) renderResult(state.last);
 }
 
-el.langToggle.addEventListener("click", () => {
-  setLanguage(currentLang() === "sk" ? "en" : "sk");
+for (const code of LANGS) {
+  const opt = document.createElement("option");
+  opt.value = code;
+  opt.lang = code;
+  opt.textContent = LANG_NAMES[code] || code;
+  el.lang.appendChild(opt);
+}
+
+el.lang.addEventListener("change", () => {
+  setLanguage(el.lang.value);
 });
 
 // ---------- file selection ----------
 
 function describeFile(file) {
-  const fmt = sourceFormatOf(file.name);
   el.fileName.textContent = t("file.selected", { name: file.name, size: formatBytes(file.size) });
-  el.fileDirection.textContent = fmt ? t("file.direction." + fmt) : "";
+  populateTargets(sourceFormatOf(file.name));
+  updateDirection();
   show(el.fileInfo, true);
-  const isNote = fmt === "notability";
-  el.paperFieldset.disabled = isNote;
-  show(el.paperNa, isNote);
+}
+
+el.target.addEventListener("change", updateDirection);
+
+function renderSupported() {
+  const names = FORMATS.filter((f) => f.readable).map((f) => f.name);
+  el.supported.textContent = t("app.supported", { list: names.join(", ") });
 }
 
 function acceptFile(file) {
@@ -185,10 +271,10 @@ function acceptFile(file) {
   show(el.result, false);
   state.last = null;
   if (!file) return;
-  if (!sourceFormatOf(file.name)) {
+  if (!sourceFormatOf(file.name) && !containerExtensionOf(file.name)) {
     state.file = null;
     show(el.fileInfo, false);
-    el.fileError.textContent = t("file.badext");
+    el.fileError.textContent = t("file.badext", { list: readableExtensions().concat(CONTAINER_EXTENSIONS).join(", ") });
     show(el.fileError, true);
     updateConvertButton();
     return;
@@ -251,8 +337,8 @@ el.reset.addEventListener("click", () => {
   show(el.reset, false);
   hideError();
   el.convert.textContent = t("convert");
-  el.paperFieldset.disabled = false;
-  show(el.paperNa, false);
+  populateTargets(null);
+  updateDirection();
   updateConvertButton();
 });
 
@@ -397,6 +483,8 @@ async function convertViaServer(file, options) {
     pressure: options.pressure ? "true" : "false",
     simplify: String(options.simplify),
   });
+  if (options.target) q.set("to", options.target);
+  if (options.pdf_ink) q.set("pdf_ink", options.pdf_ink);
   const form = new FormData();
   form.append("file", file, file.name);
   const r = await fetch(new URL("api/convert?" + q.toString(), location.href).href, {
@@ -440,22 +528,30 @@ async function convertViaServer(file, options) {
       name = hinted;
     }
   }
-  if (!name) name = swapExtension(file.name);
-  const src = sourceFormatOf(file.name);
+  const src = r.headers.get("X-GnNote-Source-Format") || sourceFormatOf(file.name);
+  const srcFmt = formatById(src);
+  const target = options.target || (srcFmt && srcFmt.defaultTarget) || "notability";
+  if (!name) name = swapExtension(file.name, target);
   return {
     name: name,
     blob: blob,
     warnings: Array.isArray(warnings) ? warnings : [],
     stats: stats && typeof stats === "object" ? stats : {},
     sourceFormat: src,
-    targetFormat: src === "goodnotes" ? "notability" : "goodnotes",
+    targetFormat: target,
   };
 }
 
-function swapExtension(name) {
-  return /\.goodnotes$/i.test(name)
-    ? name.replace(/\.goodnotes$/i, ".note")
-    : name.replace(/\.note$/i, ".goodnotes");
+function swapExtension(name, target) {
+  const dst = formatById(target);
+  const src = formatById(sourceFormatOf(name));
+  // "Name.cnote.zip" -> "Name", "Notebook.zip" (a OneNote download) -> "Notebook"
+  let stem = withoutZip(name);
+  const ext = src
+    ? src.inputExtensions.find((e) => stem.toLowerCase().endsWith(e))
+    : containerExtensionOf(stem);
+  if (ext) stem = stem.slice(0, stem.length - ext.length);
+  return stem + (dst ? dst.extension : "");
 }
 
 async function convertViaWorker(file, options) {
@@ -488,7 +584,7 @@ async function convertViaWorker(file, options) {
   });
   worker.postMessage({ type: "convert", id: id, name: file.name, buffer: buffer, options: options }, [buffer]);
   const msg = await done;
-  const mime = msg.targetFormat === "notability" ? "application/x-notability-note" : "application/x-goodnotes";
+  const mime = MIME_TYPES[msg.targetFormat] || "application/octet-stream";
   return {
     name: msg.name,
     blob: new Blob([msg.buffer], { type: mime }),
@@ -581,9 +677,11 @@ hostedDownloads.then((dl) => {
 
 function renderHostedHint(res) {
   const hosted = !!state.downloads;
-  show(el.hostedHint, hosted);
+  const saved = hostedFileName(res.name);
+  // a PDF keeps its name, so there is nothing to rename
+  show(el.hostedHint, hosted && saved !== res.name);
   if (hosted) {
-    el.hostedHint.textContent = t("result.hosted.hint", { name: res.name, saved: hostedFileName(res.name) });
+    el.hostedHint.textContent = t("result.hosted.hint", { name: res.name, saved: saved });
     show(el.share, false);
   }
 }
@@ -665,7 +763,11 @@ function loadVersion() {
 }
 
 applyLanguage(initialLang());
+el.lang.value = currentLang();
 setEngineStatus();
+renderSupported();
+populateTargets(null);
+updateDirection();
 updateConvertButton();
 loadVersion();
 detectEngine();

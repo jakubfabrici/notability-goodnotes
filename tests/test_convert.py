@@ -42,7 +42,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pytest
 
-from gnnote import applelz4, protobuf, tpl
+from gnnote import applelz4, formats, protobuf, tpl
 from gnnote.convert import (EXTENSIONS, GOODNOTES, NOTABILITY, ConvertResult, Options, convert,
                             detect_format, document_stats, other_format, output_filename, to_document)
 from gnnote.goodnotes.reader import read_goodnotes
@@ -173,13 +173,16 @@ def test_detect_format_by_content_and_extension() -> None:
 def test_other_format_and_output_filename() -> None:
     assert other_format(GOODNOTES) == NOTABILITY and other_format(NOTABILITY) == GOODNOTES
     with pytest.raises(ValueError):
-        other_format("pdf")
+        other_format("keynote")
     assert output_filename("dir/Mathe 1.goodnotes", NOTABILITY) == "Mathe 1.note"
     assert output_filename("x.note", GOODNOTES) == "x.goodnotes"
     assert output_filename("archive.zip", NOTABILITY) == "archive.note"
     assert output_filename(".note", GOODNOTES) == ".note.goodnotes"
     assert output_filename("", NOTABILITY) == "converted.note"
-    assert EXTENSIONS == {GOODNOTES: ".goodnotes", NOTABILITY: ".note"}
+    assert output_filename("Lecture.cnote.zip", NOTABILITY) == "Lecture.note"  # a zipped package
+    assert output_filename("a.b.zip", NOTABILITY) == "a.b.note"
+    assert EXTENSIONS[GOODNOTES] == ".goodnotes" and EXTENSIONS[NOTABILITY] == ".note"
+    assert EXTENSIONS == {f.id: f.extension for f in formats.FORMATS.values()}
 
 
 def test_options_validation() -> None:
@@ -401,6 +404,8 @@ def test_goodnotes_to_notability_widths_and_pressure_flag(samples) -> None:
 
 PFG_SCRIPT = r"""
 import json, sys
+import oracle_shims
+oracle_shims.frame_parser_for_goodnotes()
 from goodnotes_re import GoodNotesDocument
 out = []
 with GoodNotesDocument.open(sys.argv[1]) as doc:
@@ -415,9 +420,10 @@ print(json.dumps(out))
 
 
 def run_parser_for_goodnotes(samples, path: Path) -> List[Dict[str, Any]]:
-    """parser-for-goodnotes' view of ``path`` from a subprocess with its own PYTHONPATH."""
+    """parser-for-goodnotes' view of ``path`` from a subprocess with its own PYTHONPATH
+    (the script calls tests/oracle_shims.py first)."""
     root = samples.repo("parser-for-goodnotes") / "src"
-    env = dict(os.environ, PYTHONPATH=str(root))
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(root), str(Path(__file__).resolve().parent)]))
     proc = subprocess.run([sys.executable, "-c", PFG_SCRIPT, str(path)], env=env,
                           capture_output=True, text=True, timeout=600)
     if proc.returncode != 0:

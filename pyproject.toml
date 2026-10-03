@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gnnote"
-description = "Convert between GoodNotes (.goodnotes) and Notability (.note) files keeping handwriting editable"
+description = "Convert handwritten notes between note apps (GoodNotes, Notability, Noteful, Xournal++, Saber, Excalidraw, PDF; reading also CollaNote, MyScript Notes, Flexcil, reMarkable and OneNote) keeping handwriting editable"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = []
 dynamic = ["version"]
-keywords = ["goodnotes", "notability", "handwriting", "converter", "ipad"]
+keywords = ["goodnotes", "notability", "noteful", "onenote", "collanote", "pdf", "handwriting", "converter", "ipad"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -38,6 +38,10 @@ Source = "https://github.com/jakubfabrici/notability-goodnotes"
 
 [tool.setuptools]
 include-package-data = false
+
+[tool.setuptools.package-data]
+# the PDF writer's embedded font (DejaVu subset and its licence)
+"gnnote.pdf" = ["fonts/*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "gnnote.__version__" }

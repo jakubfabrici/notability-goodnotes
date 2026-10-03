@@ -10,4 +10,10 @@ node_modules/
 tests/.samples/
 *.note
 *.goodnotes
+*.xopp
+*.xoj
+*.sba
+*.sbn2
+*.sbn
+*.excalidraw
 !tests/fixtures/**

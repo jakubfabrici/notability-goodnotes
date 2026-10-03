@@ -58,6 +58,27 @@ gnnote/
   notability/archivebuilder.py NSKeyedArchiver object-graph builder (write)
   notability/reader.py   read_note(data: bytes) -> Document
   notability/writer.py   write_note(doc: Document, options: Options | None = None) -> bytes
+  noteful/__init__.py    constants of the .noteful container (docs/noteful.md)
+  noteful/ttv.py         tag-type-value records: bounded tolerant decoder, strict encoder
+  noteful/reader.py      read_noteful(data: bytes) -> Document
+  noteful/writer.py      write_noteful(doc: Document, options: Options | None = None) -> bytes
+  pencilkit.py           Apple PencilKit PKDrawing -> neutral PKStroke list -> model strokes (app-neutral)
+  collanote/__init__.py
+  collanote/reader.py    read_cnote(data: bytes) -> Document   (CollaNote .cnote; read only, docs/collanote.md)
+  readutil.py            bounded ZIP / JSON helpers shared by the other apps' readers
+  nebo/bink.py           MyScript BINK ink -> strokes + tag table
+  nebo/reader.py         read_nebo(data: bytes) -> Document            (MyScript Notes / Nebo, read only)
+  flexcil/reader.py      read_flexcil(data: bytes, document=None) -> Document  (Flexcil .flx / .flex, read only)
+  remarkable/scene.py    reMarkable v6 scene: tagged blocks, CRDT order, lines, glyphs, text
+  remarkable/reader.py   read_remarkable(data: bytes) -> Document      (reMarkable .rmdoc / .rm, read only)
+  codecutil.py           helpers of the open-format codecs: image sniffing, polylines, bounded ZIP / inflate
+  xournalpp/             Xournal++ .xopp / .xoj: reader.read_xopp, writer.write_xopp (docs/xournalpp.md)
+  saber/                 Saber .sba / .sbn2 / .sbn: bson, reader.read_saber, writer.write_saber (docs/saber.md)
+  excalidraw/            Excalidraw .excalidraw: reader.read_excalidraw, writer.write_excalidraw (docs/excalidraw.md)
+  onenote/               read only: common.py (bounded bytes, property sets), native.py (desktop
+                         revision store), package.py (OneDrive packaging), schema.py, ink.py,
+                         reader.py read_onenote(data: bytes) -> Document  (docs/onenote.md)
+  formats.py             the format registry: id, name, extensions, content sniffer, reader / writer paths
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
   server.py              stdlib HTTP server: static web UI + POST /api/convert
@@ -104,14 +125,28 @@ gnnote.goodnotes.reader.read_goodnotes(data: bytes) -> Document
 gnnote.goodnotes.writer.write_goodnotes(doc: Document, options: Options) -> bytes
 gnnote.notability.reader.read_note(data: bytes) -> Document
 gnnote.notability.writer.write_note(doc: Document, options: Options) -> bytes
+gnnote.noteful.reader.read_noteful(data: bytes) -> Document
+gnnote.noteful.writer.write_noteful(doc: Document, options: Options) -> bytes   # Noteful: docs/noteful.md
+gnnote.collanote.reader.read_cnote(data: bytes) -> Document          # no CollaNote writer
+gnnote.pencilkit.parse_pkdrawing(data: bytes) -> PKDrawing            # version, inks, strokes, skipped counts
+gnnote.pencilkit.decode_pkdrawing(data: bytes) -> List[PKStroke]
+gnnote.pencilkit.to_model_stroke(stroke, scale=1.0, dx=0.0, dy=0.0) -> Optional[Stroke]
+gnnote.nebo.reader.read_nebo(data: bytes) -> Document                 # read only
+gnnote.flexcil.reader.read_flexcil(data: bytes, document=None) -> Document   # read only
+gnnote.flexcil.reader.list_flexcil_documents(data: bytes) -> List[FlexcilEntry]
+gnnote.remarkable.reader.read_remarkable(data: bytes) -> Document     # read only
+gnnote.onenote.reader.read_onenote(data: bytes) -> Document   # .one (both packagings) or a notebook .zip
 ```
+
+Every format is one entry of `gnnote/formats.py` (`FORMATS`): id, name, extensions, a content
+sniffer and the reader / writer paths (`None` for a read-only app).
 
 Primitives:
 
 ```python
 # protobuf.py
 class Field(NamedTuple): number: int; wire_type: int; value: Union[int, bytes]
-def decode_message(data: bytes) -> List[Field]
+def decode_message(data: bytes, max_fields: Optional[int] = None) -> List[Field]   # ValueError beyond max_fields
 def decode_records(data: bytes) -> List[bytes]           # varint-length-prefixed record stream
 def encode_records(records: Iterable[bytes]) -> bytes
 def varint(n: int) -> bytes
@@ -335,9 +370,9 @@ event synthesis, inkref's confirmed stroke encoding):
     (§5.1).
   * `Image.rotation`: GoodNotes has no verified rotation field (`#3.#3` is never written). A
     JPEG whose EXIF orientation prescribes the same quarter-turn (6 → 90, 3 → 180, 8 → 270) is
-    written unchanged with `#2`/`#3` = the **displayed** box (w/h swapped about the centre for
-    90/270), exactly as GoodNotes stores EXIF photos (§5.3); one counted warning. Every other
-    rotation is dropped with a counted warning.
+    written unchanged with `#2`/`#3` = the model's box, which for such a photo already is the
+    **displayed** box (§4.1), exactly as GoodNotes stores EXIF photos (§5.3); one counted
+    warning. Every other rotation is dropped with a counted warning.
   * `TextBox.align` "center"/"right" → `\qc`/`\qr` in the RTF paragraph header;
     `TextBox.rotation` is dropped with a counted warning.
   * Container: schema stays 24 everywhere (`goodnotes-v35-binding.md` §12); `document.info.pb`
@@ -348,13 +383,50 @@ event synthesis, inkref's confirmed stroke encoding):
   for the hand-decoded sample stroke match GoodNotes' own bytes (test), otherwise the option
   falls back to flat with a warning.
 
+### 4.5 CollaNote → model (`collanote/reader.py`; byte facts in `collanote.md`)
+
+* Containers: format-1 ZIP (`note without pdf.cnote`, `N.cpage`, `N.pdf`), format-2 package
+  (`manifest.cnm`, `basenote.cdat`, …) zipped with or without its `X.cnote/` folder, a ZIP
+  holding one `.cnote`, and (best effort) the bare-JSON note. The registry sniffs member names at
+  depth ≤ 1, so `X.cnote.zip` or any other name converts; `output_filename` drops both extensions.
+* Pages in file-number order. `pdfPointer` → `PdfBackground(str(pdfIndex), pageIndex)`, page =
+  the PDF page's size, `s = pdf_w / W` (`W, H` = note `size`); blank page = `W × H` scaled like
+  the nearest PDF page, else 0.2 mm per unit (A4 notebooks). Ink, images and text use `s`.
+* `_dkDrawing` strokes → polylines with per-point widths (`#3`, fallback style width); inkType 27
+  → highlighter, 1 / 5 / unknown → pen (unknown codes warned once, listed); colour RGBA as stored.
+  Legacy `drawing` PencilKit ink via `gnnote.pencilkit`, moved up by `i·H` when it lies in page
+  `i`'s band of one continuous canvas (unverified, warned).
+* Attachments: `image` → `Image` (centre/size normalised by `W`/`H`; rotation clockwise about the
+  centre, unverified when non-zero), `text` → `TextBox` from the NSAttributedString (font size in
+  canvas units × `s`; warned as inferred). Audio, bookmarks, unknown attachments → warnings.
+* Limits: members 256 MB / 1 GB total, base64 payloads 64 MB, 200 000 strokes and 2 000 000
+  points per page, 10 000 pages; a damaged page becomes a blank page with a warning; only
+  non-CollaNote data raises `ValueError`. No writer (unverified import route and `Codable`
+  strictness, see `collanote.md` §9).
+
+### 4.6 Other apps (read only)
+
+Readers of formats other apps write follow the same rules as the two original readers
+(tolerant, one warning per lossy step, `ValueError` only for "not a <format> file", bounded
+decompression through `readutil.ZipBundle`, at most 10 000 000 ink points per document).
+Their byte layouts, mappings and open questions are in their own notes:
+
+* MyScript Notes / Nebo `.nebo`: `docs/nebo.md` (BINK ink with pen classes, colours and the
+  pressure width law; the BDOM layout data is not decoded).
+* Flexcil `.flx` / `.flex`: `docs/flexcil.md` (width-normalised ink, shapes as strokes, PDF
+  backgrounds, text boxes, images; one document per backup).
+* reMarkable `.rmdoc` / `.rm`: `docs/remarkable.md` (v6 scenes ported from rmscene, stored
+  rendered widths, 226-dpi pages or PDF pages, highlights, approximate typed-text anchors).
+
 ## 5. Web UI (`web/`)
 
 * Static, no build step for development: `index.html` + `app.js` (main thread) + `worker.js`
   (**module** worker) + `styles.css` + `i18n.js` (Slovak default, English toggle, strings in
   one table). Works from `file://`? No — served over HTTP (`python -m gnnote.server` or any
   static host). Phone-width layout, dark mode via `prefers-color-scheme`.
-* Flow: choose/drop a `.goodnotes` or `.note` → options (paper: plain/pdf; pressure; simplify)
+* Flow: choose/drop a file with a readable format's extension (`web/formats.js`), or any `.zip`
+  (a zipped note, e.g. a CollaNote package `X.cnote.zip`; the converter decides from the content)
+  → options (paper: plain/pdf; pressure; simplify)
   → "Convert" → progress (loading Python ~13.5 MB on first use, converting) → download card with
   the output name, stats, warnings → buttons: **Download** (`a[download]`) and, when
   `navigator.canShare({files})`, **Share / Save to Files** (`navigator.share`). Errors show the
@@ -405,8 +477,15 @@ event synthesis, inkref's confirmed stroke encoding):
 * `tests/conftest.py`: fixture `samples` → directory with the reference repositories
   (`franzthiemann/goodparse`, `Kaih1825/parser-for-goodnotes`, `HuyNguyenAu/notability-to-svg`,
   `xrayshan/notability-reader`, `jvns/svg2notability`, `samuelsadok/notesconverter`,
-  `nokcha0/Notability-notes-converter`, `cable729/inkterop`, `miroreo/denotability`), taken from `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
-  `tests/.samples/` (skipped when offline). Oracle parsers run **in a subprocess** with their
+  `nokcha0/Notability-notes-converter`, `cable729/inkterop`, `miroreo/denotability`, the
+  CollaNote / PencilKit samples `enisogdum/YTU-Archive` (sparse checkout) and `r987r/Flashcard`,
+  for the other apps `janptn/flexcil-backup-viewer`, `jeonghyeon-net/flexcil-codex-plugin`,
+  `ricklupton/rmscene`, `ricklupton/rmc` and `szainababbas/RM-Sticker-Press`, and the test
+  files of `xournalpp/xournalpp` and `saber-notes/saber` (sparse checkouts)), taken from
+  `$GNNOTE_SAMPLES` if set, else fetched at pinned commits into
+  `tests/.samples/` (skipped when offline). Large single files (`LARGE_FILES`: a 100 MB CollaNote
+  notebook) are used when present and downloaded only with `GNNOTE_LARGE_SAMPLES=1` (SHA-256
+  pinned; CI skips them). Oracle parsers run **in a subprocess** with their
   own `PYTHONPATH` (never imported into our package).
 * Unit tests per primitive (hand-built vectors + round trips). Reader tests over every sample
   file of both formats: no exception, stroke counts match the oracle parser where one exists,
@@ -428,3 +507,84 @@ event synthesis, inkref's confirmed stroke encoding):
 | 5 | Shared multi-page PDF attachments in GoodNotes output | Matches the format's design (`#2.#5` page index); splitting needs a PDF page extractor |
 | 6 | Notability plain page = 612 × 803.25 pt | Notability's own PDF export size; keeps 1.3125 ratio |
 | 7 | Browser-first (Pyodide) with optional server | Runs on the iPad itself; no hosting needed; server only for speed on a homelab |
+
+## 9. PDF (`gnnote/pdf/`)
+
+PDF is a third registered format (`formats.py` id `pdf`, `.pdf`, sniffed by `%PDF` in the
+first 1024 bytes of a non-ZIP file; default target Notability). Byte-level facts and every
+rule are in `docs/pdf.md`; this section is the contract.
+
+```
+gnnote/pdf/
+  objects.py   PdfFile(_Document): pages() with object refs and inherited MediaBox (4 corners),
+               CropBox, Rotate, Resources -- the same walk and fallbacks as pdfutil.pdf_info;
+               serialize(), PdfWriter, Copier (renumbering object-graph copy, iterative),
+               incremental_update(pdf, {ref: obj}), rewrite(pdf, {page_index: dict})
+  writer.py    write_pdf(doc: Document, options: Options | None = None) -> bytes
+  reader.py    read_pdf(data: bytes) -> Document
+  images.py    jpeg_image / png_image -> PdfImage (XObject dict + data [+ soft mask]);
+               decode_png (reference decoder); jpeg_info (size, components, EXIF orientation)
+  text.py      choose_font(texts) -> Helvetica | EmbeddedFont; layout(box, font); text_box_ops
+  ttf.py       TrueTypeFont (cmap 4/12, hmtx, metrics, glyph subset); default_font()
+  fonts/       DejaVuSans-subset.ttf (tools/make_font_subset.py, fontTools at dev time only)
+```
+
+`Options.pdf_ink: str = "flatten"` (`"flatten"` | `"annotations"`, validated); CLI
+`--pdf-ink` on `convert` and `batch`, `batch --include-pdf` (PDF inputs are opt-in for batch);
+server parameter `pdf_ink`.
+
+### 9.1 Model -> PDF (`writer.py`)
+
+* PDF 1.7, classic xref, deterministic bytes (`/ID` = MD5 of the bodies), `/Info` = `/Title`
+  (UTF-16BE + BOM when not ASCII) and `/Producer (gnnote <version>)`; one Flate content stream
+  per page; `/MediaBox [0 0 w h]`; model points written as `(x, h - y)`.
+* Page content: background, images, text boxes, ink (`Page.strokes` order).
+* Backgrounds: the referenced PDF page (user PDFs and stock paper alike) as a Form XObject
+  (contents joined, resources and everything they reference copied once per source PDF,
+  visible annotations' appearances drawn on top) under the matrix MediaBox origin -> 0,
+  `/Rotate` applied, scaled to the model page. `paper` lined/grid/dotted without a background
+  imports `make_paper_pdf`. Encrypted / unreadable / missing PDFs: blank + warning.
+* Images: JPEG passthrough (`/DCTDecode`, Adobe CMYK `/Decode` inverted); PNG passthrough with
+  predictor 15 for grey/RGB/palette, filtered-row splitting into colour + `/SMask` for alpha,
+  full decode only for palette transparency, interlace and damaged data; PDF images as Form
+  XObjects. Rotation clockwise about the box centre; an EXIF JPEG whose orientation prescribes
+  the same quarter turn keeps its displayed box (raw pixels turned into it, upright).
+* Text: Helvetica/WinAnsi when all text is in cp1252, else the DejaVu subset as Type0 /
+  Identity-H with `/W` and `/ToUnicode` (missing glyphs -> `?`, one warning); greedy wrap with
+  real widths (12 % overflow tolerance, then condensed), baselines 0.952 / 1.1646 em, align,
+  bold = render mode 2 with an outline of size/30, italic = 12 degree skew, underline,
+  rotation about the top-left corner.
+* Ink, flatten: one path per constant-width stroke (`l` or `c`), variable width as runs of
+  pieces (<= 5 % width change) with round caps; highlighters `/BM /Multiply` + alpha (0.5 when
+  opaque); translucent variable-width strokes inside a transparency group; fills with `/ca`.
+  Annotations: `/Ink` per stroke with `/InkList`, `/BS /W` median, `/C`, `/CA`, `/F 4`, `/P`,
+  `/NM` and an `/AP /N` that draws exactly the flatten output (alpha baked in); fills stay in
+  the content.
+
+### 9.2 PDF -> model (`reader.py`)
+
+* One PDF-backed page per PDF page (displayed size; `pdf_id` = UUID of the input's SHA-1;
+  `template_is_builtin = False`); title `/Info /Title` or "PDF".
+* `/Ink`, `/Line`, `/PolyLine`, `/Polygon` (+`/IC` fill), `/Square`, `/Circle` (+ fill) ->
+  strokes; `/FreeText` -> `TextBox`; `/Highlight` -> one highlighter stroke per quad. Width
+  `/BS /W` / `/Border` / 1, colour `/C` (grey/RGB/CMYK, default black), alpha `/CA` or the
+  appearance's ExtGState, highlighter when alpha <= 0.6 or `/BM /Multiply`. Ink geometry
+  comes from the appearance when it strokes exactly the path `/InkList` describes (exact
+  Bezier handles); filled appearances give the width estimate.
+* Converted annotations and their popups are removed by an incremental update rewriting the
+  affected page dictionaries (xref table or stream like the file's newest section); damaged
+  cross-reference data -> full rewrite; the result is verified or the conversion is
+  abandoned. Encrypted files: untouched, nothing converted, warning.
+* `ValueError` only for "not a PDF" / "no page"; everything else is a warning.
+
+### 9.3 Decisions
+
+| # | Decision | Why |
+|---|----------|-----|
+| P1 | Reuse `pdfutil`'s tolerant parser for reading, subclass it for page refs | One parser; page *n* means the same page in `pdf_info`, the writer and the reader, damaged files included |
+| P2 | Highlight annotations become highlighter strokes, not fills | Both apps keep highlighter ink editable; Notability drops fills |
+| P3 | Alpha baked into the `/AP` of written ink annotations, `/CA` set as well | ISO 32000-1 table 170: with an appearance stream, `/CA` is not used -- MuPDF and others paint `/AP` as is |
+| P4 | Appearance geometry preferred over `/InkList` when they agree | GoodNotes' `/InkList` holds only the anchors of its shapes; round trips keep exact Bezier handles |
+| P5 | `batch` converts PDFs only with `--include-pdf` | PDF exports sit next to their notebooks; both would map to the same output name |
+| P6 | Helvetica for cp1252 text, else an embedded 155 KB DejaVu subset | No embedding in the common case; Slovak (carons) and Cyrillic still searchable and copyable |
+| P7 | No vectorisation of page content | Flattened ink cannot be told apart from the page reliably; it stays background |

@@ -11,8 +11,9 @@
 //          [--browser PATH]           Chromium executable (default: $PW_CHROMIUM, /opt/pw-browsers/chromium
 //                                     when it exists, else Playwright's own Chromium)
 //          [--timeout MS]             overall conversion timeout (default: 300000)
-//          [--paper plain|pdf] [--no-pressure] [--simplify N]
-//          [--lang sk|en]             click the language toggle to this language first
+//          [--to FORMAT] [--paper plain|pdf] [--no-pressure] [--simplify N]   (Notability options)
+//          [--pdf-ink flatten|annotations]                                  (PDF option)
+//          [--lang sk|en|uk]          switch the page to this language first
 //          [--verbose]                echo browser console messages
 //
 // Prints one JSON line {ok, outputPath, name, size, stats, warnings, engine, ms}
@@ -39,8 +40,10 @@ function parseArgs(argv) {
     browser: process.env.PW_CHROMIUM || (fs.existsSync("/opt/pw-browsers/chromium") ? "/opt/pw-browsers/chromium" : null),
     timeout: 300000,
     paper: null,
+    to: null,
     pressure: true,
     simplify: null,
+    pdfInk: null,
     lang: null,
     verbose: false,
   };
@@ -58,8 +61,10 @@ function parseArgs(argv) {
       case "--browser": args.browser = next(); break;
       case "--timeout": args.timeout = parseInt(next(), 10); break;
       case "--paper": args.paper = next(); break;
+      case "--to": args.to = next(); break;
       case "--no-pressure": args.pressure = false; break;
       case "--simplify": args.simplify = next(); break;
+      case "--pdf-ink": args.pdfInk = next(); break;
       case "--lang": args.lang = next(); break;
       case "--verbose": args.verbose = true; break;
       case "-h": case "--help":
@@ -160,10 +165,14 @@ async function main() {
   if (args.pyodideBase) pyodideBase = new URL(args.pyodideBase, origin + "/").href;
   else if (args.pyodideDir) pyodideBase = origin + "/pyodide/";
 
+  // Under a non-UTF-8 locale (LANG unset or "C") Chromium saves a download whose name has
+  // non-ASCII characters as "download"; note names often have them, so give it a UTF-8 one.
+  const utf8 = /utf-?8/i.test(process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG || "");
   const browser = await chromium.launch({
     executablePath: args.browser || undefined, // undefined: Playwright's own Chromium
     headless: true,
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
+    env: utf8 ? process.env : Object.assign({}, process.env, { LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }),
   });
   const logs = [];
   try {
@@ -183,14 +192,19 @@ async function main() {
     });
 
     await page.goto(origin + "/", { waitUntil: "load" });
-    if (args.lang) {
-      const current = await page.evaluate(() => document.documentElement.lang);
-      if (current !== args.lang) await page.click("#lang-toggle");
-    }
-    await page.setInputFiles("#file", input);
+    if (args.lang) await page.selectOption("#lang", args.lang);
+    // the bytes and the name, not the path: Chromium drops a file whose path has non-ASCII
+    // characters (seen with a C locale), and note names often have them ("Poznámky", "YİF")
+    await page.setInputFiles("#file", {
+      name: path.basename(input),
+      mimeType: "application/octet-stream",
+      buffer: fs.readFileSync(input),
+    });
+    if (args.to) await page.selectOption("#target", args.to);
     if (args.paper) await page.check('input[name="paper"][value="' + args.paper + '"]');
     if (!args.pressure) await page.uncheck("#pressure");
     if (args.simplify !== null) await page.fill("#simplify", String(args.simplify));
+    if (args.pdfInk) await page.check('input[name="pdf_ink"][value="' + args.pdfInk + '"]');
     await page.waitForSelector("#convert:not([disabled])", { timeout: 30000 });
 
     const downloadPromise = page.waitForEvent("download", { timeout: args.timeout });

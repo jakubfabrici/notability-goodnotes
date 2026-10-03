@@ -16,7 +16,7 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from gnnote import __version__
+from gnnote import __version__, formats
 from gnnote.cli import build_parser, describe, main
 from gnnote.convert import GOODNOTES, NOTABILITY, Options
 from gnnote.goodnotes.reader import read_goodnotes
@@ -82,7 +82,7 @@ def test_usage_errors_exit_two(capsys: pytest.CaptureFixture[str]) -> None:
     assert "usage" in capsys.readouterr().err
     assert main(["convert"]) == 2
     assert main(["convert", "x.note", "--paper", "lined"]) == 2
-    assert main(["batch", "d", "--to", "pdf"]) == 2
+    assert main(["batch", "d", "--to", "keynote"]) == 2
     assert main(["frobnicate"]) == 2
     assert main(["--help"]) == 0
     assert main(["--version"]) == 0
@@ -148,7 +148,7 @@ def test_convert_failures_exit_one(tmp_path: Path, capsys: pytest.CaptureFixture
     junk = tmp_path / "junk.txt"
     junk.write_bytes(b"hello")
     assert main(["convert", str(junk)]) == 1
-    assert "neither" in capsys.readouterr().err
+    assert "not a supported note file" in capsys.readouterr().err
     bad = tmp_path / "bad.note"
     bad.write_bytes(b"PK\x03\x04 not really a zip")
     assert main(["convert", str(bad)]) == 1
@@ -218,7 +218,10 @@ def test_batch_to_filter_and_failure(note_file: Path, goodnotes_file: Path, tmp_
     empty = tmp_path / "empty"
     empty.mkdir()
     assert main(["batch", str(empty)]) == 0
-    assert "no .goodnotes or .note files" in capsys.readouterr().out
+    message = capsys.readouterr().out
+    assert message.startswith("no note files to convert")
+    # every readable format is looked for (PDFs only with --include-pdf)
+    assert all(ext in message for f in formats.readable() if f.id != "pdf" for ext in f.input_extensions)
     assert main(["batch", str(tmp_path / "missing-dir")]) == 1
     assert "not a directory" in capsys.readouterr().err
 
@@ -227,6 +230,31 @@ def test_batch_default_output_is_the_input_directory(note_file: Path) -> None:
     proc = run_cli("batch", str(note_file.parent), "--to", GOODNOTES)
     assert proc.returncode == 0, proc.stderr
     assert (note_file.parent / "Mini.goodnotes").is_file()
+
+
+def test_noteful_files_convert_from_the_command_line(tmp_path: Path) -> None:
+    from gnnote.noteful.reader import read_noteful
+    from gnnote.noteful.writer import write_noteful
+
+    source = tmp_path / "Mini.noteful"
+    source.write_bytes(write_noteful(_doc()))
+    proc = run_cli("formats")
+    assert proc.returncode == 0
+    line = next(row for row in proc.stdout.splitlines() if row.startswith("noteful"))
+    assert "Noteful" in line and ".noteful" in line and "read and write" in line
+    proc = run_cli("convert", str(source), "--to", GOODNOTES)
+    assert proc.returncode == 0, proc.stderr
+    assert "noteful -> goodnotes" in proc.stdout
+    back = read_goodnotes((tmp_path / "Mini.goodnotes").read_bytes())
+    assert back.title == "Mini" and [len(p.strokes) for p in back.pages] == [2]
+    proc = run_cli("convert", str(tmp_path / "Mini.goodnotes"), "--to", "noteful", "-o", str(tmp_path / "out") + "/")
+    assert proc.returncode == 0, proc.stderr
+    again = read_noteful((tmp_path / "out" / "Mini.noteful").read_bytes())
+    assert [len(p.strokes) for p in again.pages] == [2] and [len(p.texts) for p in again.pages] == [1]
+    proc = run_cli("info", str(source), "--json")
+    assert proc.returncode == 0 and json.loads(proc.stdout)["format"] == "noteful"
+    assert main(["convert", str(source)]) == 0  # default target: Notability
+    assert read_note((tmp_path / "Mini.note").read_bytes()).title == "Mini"
 
 
 # --------------------------------------------------------------------------- samples

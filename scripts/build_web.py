@@ -29,6 +29,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import urllib.request
 import zipfile
@@ -135,6 +136,22 @@ def vendor_pyodide(out_dir: Path, version: str, source_dir: Path | None, files: 
             print("         %d bytes" % dest.stat().st_size)
 
 
+def write_formats(package_dir: Path, out_dir: Path) -> bool:
+    """Regenerate formats.js from the package's format registry.
+
+    Runs in a subprocess so the build does not import the package into this interpreter.
+    A package without ``formats.py`` (e.g. a test stub) keeps the copied web/formats.js.
+    """
+    if not (package_dir / "formats.py").is_file():
+        return False
+    code = ("import sys; sys.path.insert(0, %r); from %s.formats import web_formats_js; "
+            "sys.stdout.write(web_formats_js())" % (str(package_dir.parent), package_dir.name))
+    text = subprocess.run([sys.executable, "-c", code], check=True, capture_output=True,
+                          text=True, encoding="utf-8").stdout
+    (out_dir / "formats.js").write_text(text, encoding="utf-8")
+    return True
+
+
 def build(out_dir: Path, package_dir: Path, web_dir: Path, vendor: bool,
           pyodide_from: Path | None, pyodide_version: str, clean: bool) -> dict:
     if clean and out_dir.exists():
@@ -147,6 +164,8 @@ def build(out_dir: Path, package_dir: Path, web_dir: Path, vendor: bool,
     zip_path = out_dir / "gnnote.zip"
     n = zip_package(package_dir, zip_path)
     print("package:  %s (%d members, %d bytes)" % (zip_path, n, zip_path.stat().st_size))
+    if write_formats(package_dir, out_dir):
+        print("formats:  %s" % (out_dir / "formats.js"))
 
     if vendor:
         vendor_pyodide(out_dir, pyodide_version, pyodide_from)

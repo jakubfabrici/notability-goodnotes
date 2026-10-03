@@ -133,6 +133,14 @@ def test_decode_message_rejects_malformed(data):
         pb.decode_message(data)
 
 
+def test_decode_message_field_bound():
+    data = b"\x08\x00" * 10
+    assert len(pb.decode_message(data)) == 10
+    assert len(pb.decode_message(data, max_fields=10)) == 10
+    with pytest.raises(ValueError, match="more than 9 fields"):
+        pb.decode_message(data, max_fields=9)
+
+
 def test_records_round_trip_and_errors():
     recs = [b"", b"a", bytes(range(200)), b"x" * 300]
     stream = pb.encode_records(recs)
