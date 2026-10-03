@@ -162,8 +162,8 @@ class NativeSpace(ObjectSpace):
 
                 try:
                     props = decode_object_propset(self._store.data, decl.stp, decl.stp + decl.cb, resolve)
-                except Damaged as exc:
-                    self._store.warn_once(f"Some OneNote objects could not be decoded and were skipped ({exc})")
+                except Damaged:
+                    self._store.warn_once("Some OneNote objects could not be decoded and were skipped")
                     props = None
                 if props is not None:
                     obj = Obj(oid, decl.jcid, props)
@@ -201,8 +201,7 @@ class NativeStore(Store):
         head.pos = 196
         expected = head.u64()
         if expected and expected > len(data):
-            self.warn_once(f"The OneNote file is truncated ({len(data)} of {expected} bytes); "
-                           "content in the missing part is lost")
+            self.warn_once("The OneNote file is truncated; content in the missing part is lost")
         self._nodes_read = 0
         self._counts = self._committed_counts()
         self._spaces: Dict[ExtGuid, Optional[Tuple[int, int]]] = {}  # gosid -> manifest list ref
@@ -388,8 +387,8 @@ class NativeStore(Store):
                 space = self._open_space(ref, manifest)
             except Encrypted:
                 raise
-            except Damaged as exc:
-                self.warn_once(f"A damaged OneNote object space was skipped ({exc})")
+            except Damaged:
+                self.warn_once("A damaged part of the OneNote file was skipped")
         self._space_cache[ref] = space
         return space
 
@@ -531,8 +530,8 @@ class NativeStore(Store):
         table: Dict[int, bytes] = {}
         try:
             nodes = self._list_nodes(stp, cb)
-        except Damaged as exc:
-            self.warn_once(f"A damaged OneNote object group was skipped ({exc})")
+        except Damaged:
+            self.warn_once("A damaged part of the OneNote file was skipped")
             return objects
         for node in nodes:
             fid = node.fid

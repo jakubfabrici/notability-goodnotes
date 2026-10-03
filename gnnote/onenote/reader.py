@@ -53,6 +53,7 @@ DEFAULT_PAGE_WIDTH = 754.0  # 20.944 half-inches: OneNote's usual page width
 DEFAULT_PAGE_HEIGHT = 783.0  # 21.75 half-inches
 PAGE_MARGIN = 36.0  # room kept around the content when a page grows to hold it
 LARGE_PAGE_FACTOR = 3.0  # pages larger than this many default pages get a warning
+PDF_PAGE_LIMIT = 14400.0  # pt (200 in): Acrobat's page-size limit, which many PDF tools keep to
 TITLE_ORIGIN = (36.0, 18.0)  # where OneNote draws a title whose offsets are zero
 DEFAULT_FONT_SIZE = 11.0  # OneNote's default body text: Calibri 11 pt
 LINE_SPACING = 1.25  # line height / font size used to estimate text heights
@@ -167,8 +168,11 @@ class _Context:
             if c[key]:
                 self.warn(template.format(n=c[key]))
         if c["large_pages"]:
+            huge = (f"; {c['huge_pages']} of them exceed {PDF_PAGE_LIMIT:g} pt (200 inches), more than some apps "
+                    "display" if c["huge_pages"] else "")
             self.warn(f"{c['large_pages']} page(s) are much larger than a OneNote page usually is; OneNote pages are "
-                      "unbounded canvases and gnnote does not split them, so the other app may show them small")
+                      "unbounded canvases and gnnote does not split them, so the other app may show them scaled "
+                      "down" + huge)
         if self.ink.exhausted:
             self.warn("The notes hold more ink than gnnote reads in one go; the rest was dropped")
         if c["image_budget"]:
@@ -792,6 +796,8 @@ class _PageReader:
         page.width, page.height = width, height
         if width > LARGE_PAGE_FACTOR * DEFAULT_PAGE_WIDTH or height > LARGE_PAGE_FACTOR * DEFAULT_PAGE_HEIGHT:
             self.ctx.counts["large_pages"] += 1
+            if max(width, height) > PDF_PAGE_LIMIT:
+                self.ctx.counts["huge_pages"] += 1
 
 
 def _clamp(value: float) -> float:
@@ -914,6 +920,8 @@ class _Zip:
         except (zipfile.BadZipFile, NotImplementedError, OSError, ValueError, RuntimeError, EOFError) as exc:
             raise OneNoteError(f"not a OneNote notebook: not a readable ZIP archive ({exc})") from exc
         self.budget = MAX_TOTAL_BYTES
+        self.oversized: List[str] = []  # members refused by the size guards
+        self.unreadable: List[str] = []  # members zipfile could not unpack
         self.files: Dict[str, zipfile.ZipInfo] = {}
         for info in infos:
             name = info.filename.replace("\\", "/").lstrip("/")
@@ -923,17 +931,32 @@ class _Zip:
                 continue
             self.files[name] = info
 
-    def read(self, ctx: _Context, name: str) -> Optional[bytes]:
+    def read(self, name: str) -> Optional[bytes]:
+        """A member's bytes, or None (noted for :meth:`report`) when it is too large or broken."""
         info = self.files[name]
         if info.file_size > MAX_MEMBER_BYTES or info.file_size > self.budget:
-            ctx.warn(f"{name} inflates above the {MAX_MEMBER_BYTES // (1024 * 1024)} MB limit and was skipped")
+            self.oversized.append(posixpath.basename(name))
             return None
         self.budget -= info.file_size
         try:
             return self.zip.read(info)
-        except Exception as exc:  # noqa: BLE001 - corrupt member, unsupported compression, ...
-            ctx.warn(f"{name} could not be unpacked and was skipped ({exc.__class__.__name__})")
+        except Exception:  # noqa: BLE001 - corrupt member, unsupported compression, ...
+            self.unreadable.append(posixpath.basename(name))
             return None
+
+    def report(self, ctx: _Context) -> None:
+        mb = 1024 * 1024
+        if self.oversized:
+            ctx.warn(f"File(s) too large once unpacked (over {MAX_MEMBER_BYTES // mb} MB each or "
+                     f"{MAX_TOTAL_BYTES // mb} MB in all) were skipped: {_listing(self.oversized)}")
+        if self.unreadable:
+            ctx.warn(f"File(s) that could not be unpacked were skipped: {_listing(self.unreadable)}")
+
+
+def _listing(names: Sequence[str], limit: int = 10) -> str:
+    """``a, b, c``, or ``a, b, ... (25 in all)`` past ``limit`` names: warnings stay short."""
+    shown = ", ".join(names[:limit])
+    return shown if len(names) <= limit else f"{shown}, ... ({len(names)} in all)"
 
 
 def _in_recycle_bin(name: str) -> bool:
@@ -988,7 +1011,7 @@ def _ordered_sections(ctx: _Context, archive: _Zip, sections: List[str], tocs: L
         ordered: List[str] = []
         toc = toc_of.get(folder)
         if toc is not None:
-            raw = archive.read(ctx, toc)
+            raw = archive.read(toc)
             try:
                 entries = sorted(_toc_entries(ctx, raw)) if raw is not None else []
             except Exception:  # noqa: BLE001 - an unreadable table of contents only loses the order
@@ -1036,38 +1059,41 @@ def _read_zip(ctx: _Context, data: bytes) -> Tuple[str, List[Page]]:
     pages: List[Page] = []
     read_names: List[str] = []
     encrypted: List[str] = []
-    failed: List[str] = []
+    failed: List[str] = []  # damaged sections
+    unpacked = 0  # sections the ZIP itself could not give (reported by archive.report)
+    first_error = ""
     for name in ordered:
-        raw = archive.read(ctx, name)
+        raw = archive.read(name)
         label = posixpath.basename(name)[:-4]
         if raw is None:
-            failed.append(label)
+            unpacked += 1
             continue
         try:
-            title, section_pages = _read_section(ctx, raw)
+            _title, section_pages = _read_section(ctx, raw)
         except Encrypted:
             encrypted.append(label)
             continue
-        except OneNoteError as exc:
-            failed.append(label)
-            ctx.warn(f"Section {label} could not be read and was skipped: {exc}")
-            continue
         except Exception as exc:  # noqa: BLE001 - one damaged section never loses the others
             failed.append(label)
-            ctx.warn(f"Section {label} could not be read and was skipped ({exc.__class__.__name__})")
+            first_error = first_error or (str(exc) if isinstance(exc, OneNoteError) else exc.__class__.__name__)
             continue
         read_names.append(label)
         pages.extend(section_pages)
+    archive.report(ctx)
+    if failed:
+        ctx.warn("Damaged section(s) could not be read and were skipped: " + _listing(failed))
     if encrypted:
-        ctx.warn("Password-protected section(s) skipped (their content is encrypted): " + ", ".join(encrypted))
+        ctx.warn("Password-protected section(s) skipped (their content is encrypted): " + _listing(encrypted))
     if skipped_bin:
         ctx.warn(f"OneNote's recycle bin ({len(skipped_bin)} file(s) of deleted pages) was not converted")
     if not read_names:
-        if encrypted and not failed:
+        if encrypted and not failed and not unpacked:
             raise OneNoteError(ENCRYPTED_MESSAGE)
-        raise OneNoteError("none of the notebook's sections could be read")
+        reason = f" ({first_error})" if len(failed) == 1 and not encrypted and not unpacked else ""
+        raise OneNoteError("none of the notebook's sections could be read" + reason)
     if len(read_names) > 1:
-        ctx.warn(f"{len(read_names)} sections were merged into one document, in this order: " + ", ".join(read_names))
+        ctx.warn(f"{len(read_names)} sections were merged into one document, in this order: "
+                 + _listing(read_names, 50))
     top = {n.split("/")[0] for n in names if "/" in n}
     root_files = [n for n in names if "/" not in n]
     if len(top) == 1 and not root_files:

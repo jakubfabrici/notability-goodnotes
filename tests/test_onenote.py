@@ -473,10 +473,16 @@ def test_zip_error_paths(samples) -> None:
         read_onenote(_zip({"readme.txt": b"x"}))
     with pytest.raises(ValueError, match="only OneNote's recycle bin"):
         read_onenote(_zip({"N/OneNote_RecycleBin/OneNote_DeletedPages.one": ink}))
-    with pytest.raises(ValueError, match="none of the notebook's sections"):
+    with pytest.raises(ValueError, match=r"none of the notebook's sections could be read \(not a OneNote file"):
         read_onenote(_zip({"N/broken.one": b"garbage"}))
     damaged = read_onenote(_zip({"N/broken.one": b"garbage", "N/ink.one": ink}))
-    assert len(damaged.pages) == 1 and any("broken could not be read" in w for w in damaged.warnings)
+    assert len(damaged.pages) == 1
+    assert "Damaged section(s) could not be read and were skipped: broken" in damaged.warnings
+    many = read_onenote(_zip({**{f"N/s{i:02}.one": b"garbage" for i in range(25)}, "N/ink.one": ink}))
+    assert len(many.pages) == 1
+    assert [w for w in many.warnings if w.startswith("Damaged")] == [
+        "Damaged section(s) could not be read and were skipped: "
+        "s00, s01, s02, s03, s04, s05, s06, s07, s08, s09, ... (25 in all)"]
     with pytest.raises(ValueError, match="not a readable ZIP"):
         read_onenote(b"PK\x03\x04" + bytes(30))
 
@@ -487,7 +493,8 @@ def test_zip_member_size_guard(monkeypatch: pytest.MonkeyPatch, samples) -> None
     small = _sample(samples, "libmson:resources/sample-drawing/Section 1.one").read_bytes()
     monkeypatch.setattr(reader, "MAX_MEMBER_BYTES", len(small) + 1)
     doc = read_onenote(_zip({"ink.one": ink, "small.one": small}))
-    assert len(doc.pages) == 1 and any("inflates above" in w for w in doc.warnings)
+    assert len(doc.pages) == 1 and any(w.startswith("File(s) too large once unpacked") and w.endswith(": ink.one")
+                                       for w in doc.warnings)
 
 
 # --------------------------------------------------------------------------- sniffing, registry

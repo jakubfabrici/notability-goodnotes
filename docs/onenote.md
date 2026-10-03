@@ -77,7 +77,8 @@ of a ZIP, or else after the input file.
 * Nested ink containers (not seen in any sample) are placed by their own offsets and
   scaling, as the reference renderer does.
 * Printouts arrive as pictures; tables, math, tags and attachments are dropped.
-* Very large pages are not split.
+* Very large pages are not split; a page side above 14 400 pt (200 inches, the PDF page
+  limit many apps keep to) gets its own note in the warning.
 * No device-made iPad sample has been tested yet; the OneDrive (FSSHTTPB) samples come from
   OneNote for the web, Windows and Android. See section 8 for the files that would close the
   gaps.

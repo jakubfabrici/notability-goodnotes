@@ -282,8 +282,8 @@ class PackageSpace(ObjectSpace):
             if rec.data is not None:
                 try:
                     props = decode_object_propset(rec.data, rec.start, rec.end, _resolver(rec.oids, rec.cells))
-                except Damaged as exc:
-                    self._store.warn_once(f"Some OneNote objects could not be decoded and were skipped ({exc})")
+                except Damaged:
+                    self._store.warn_once("Some OneNote objects could not be decoded and were skipped")
                     props = None
             if props is not None:
                 obj = Obj(oid, rec.jcid, props)
@@ -476,8 +476,8 @@ class PackageStore(Store):
             space = self._build(cell)
         except Encrypted:
             raise
-        except Damaged as exc:
-            self.warn_once(f"A damaged OneNote object space was skipped ({exc})")
+        except Damaged:
+            self.warn_once("A damaged part of the OneNote file was skipped")
             space = None
         self._space_cache[cell] = space
         return space
