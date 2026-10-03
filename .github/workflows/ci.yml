@@ -166,3 +166,11 @@ jobs:
           NODE_PATH=$(npm root -g) node tests/e2e/run.js --dist dist \
             --input tests/.samples/e2e/input.note --expect-ext .goodnotes --out tests/e2e/out/input.goodnotes
           python -m gnnote info tests/e2e/out/input.goodnotes
+
+      - name: GoodNotes -> PDF (ink annotations) -> Notability in the browser
+        run: |
+          NODE_PATH=$(npm root -g) node tests/e2e/run.js --dist dist --to pdf --pdf-ink annotations \
+            --input tests/.samples/e2e/input.goodnotes --expect-ext .pdf --out tests/e2e/out/input.pdf
+          NODE_PATH=$(npm root -g) node tests/e2e/run.js --dist dist --lang uk \
+            --input tests/e2e/out/input.pdf --expect-ext .note --out tests/e2e/out/from-pdf.note
+          python -m gnnote info tests/e2e/out/from-pdf.note

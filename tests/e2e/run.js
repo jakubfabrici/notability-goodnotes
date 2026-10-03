@@ -165,10 +165,14 @@ async function main() {
   if (args.pyodideBase) pyodideBase = new URL(args.pyodideBase, origin + "/").href;
   else if (args.pyodideDir) pyodideBase = origin + "/pyodide/";
 
+  // Under a non-UTF-8 locale (LANG unset or "C") Chromium saves a download whose name has
+  // non-ASCII characters as "download"; note names often have them, so give it a UTF-8 one.
+  const utf8 = /utf-?8/i.test(process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG || "");
   const browser = await chromium.launch({
     executablePath: args.browser || undefined, // undefined: Playwright's own Chromium
     headless: true,
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
+    env: utf8 ? process.env : Object.assign({}, process.env, { LANG: "C.UTF-8", LC_ALL: "C.UTF-8" }),
   });
   const logs = [];
   try {
@@ -189,7 +193,13 @@ async function main() {
 
     await page.goto(origin + "/", { waitUntil: "load" });
     if (args.lang) await page.selectOption("#lang", args.lang);
-    await page.setInputFiles("#file", input);
+    // the bytes and the name, not the path: Chromium drops a file whose path has non-ASCII
+    // characters (seen with a C locale), and note names often have them ("Poznámky", "YİF")
+    await page.setInputFiles("#file", {
+      name: path.basename(input),
+      mimeType: "application/octet-stream",
+      buffer: fs.readFileSync(input),
+    });
     if (args.to) await page.selectOption("#target", args.to);
     if (args.paper) await page.check('input[name="paper"][value="' + args.paper + '"]');
     if (!args.pressure) await page.uncheck("#pressure");
