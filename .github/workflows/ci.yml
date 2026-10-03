@@ -47,7 +47,7 @@ jobs:
           import shutil, sys
           from pathlib import Path
           sys.path.insert(0, ".")
-          from tests.conftest import REPOS, clone_pinned
+          from tests.conftest import REPOS, SPARSE, clone_pinned
           root = Path("tests/.samples")
           root.mkdir(parents=True, exist_ok=True)
           for name, (url, sha) in REPOS.items():
@@ -56,7 +56,7 @@ jobs:
                   print("present:", name)
                   continue
               try:
-                  clone_pinned(target, url, sha)
+                  clone_pinned(target, url, sha, SPARSE.get(name))
                   print("cloned:", name, "@", sha[:7])
               except Exception as exc:  # noqa: BLE001
                   shutil.rmtree(target, ignore_errors=True)

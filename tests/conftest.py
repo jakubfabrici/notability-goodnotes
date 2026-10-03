@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Tuple, TypeVar
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple, TypeVar
 
 import pytest
 
@@ -51,6 +51,11 @@ REPOS: Dict[str, Tuple[str, str]] = {
                      "7c44cfd5627b4875b7bcbd262c3997fb130b001e"),
 }
 
+# Repositories too large to check out whole: only these directories are checked out (a
+# partial clone without blobs plus a cone-mode sparse checkout, so only their files are
+# downloaded).  Repositories not listed here are checked out completely.
+SPARSE: Dict[str, Tuple[str, ...]] = {}
+
 
 def _samples_root() -> Path:
     env = os.environ.get("GNNOTE_SAMPLES")
@@ -65,13 +70,15 @@ def _find_repo(root: Path, name: str) -> Optional[Path]:
     return None
 
 
-def clone_pinned(target: Path, url: str, sha: str, timeout: float = 300.0) -> None:
+def clone_pinned(target: Path, url: str, sha: str, sparse: Optional[Sequence[str]] = None,
+                 timeout: float = 300.0) -> None:
     """Check out exactly commit ``sha`` of ``url`` into the new directory ``target``.
 
     Uses a shallow fetch of the single commit (GitHub serves any full SHA that way) and
     falls back to fetching the whole history when the server refuses an unadvertised
-    object.  Raises ``subprocess.CalledProcessError`` / ``OSError`` on failure; the
-    directory is left to the caller to clean up.
+    object.  ``sparse`` (see :data:`SPARSE`) limits the checkout to those directories and
+    fetches no other file contents.  Raises ``subprocess.CalledProcessError`` / ``OSError``
+    on failure; the directory is left to the caller to clean up.
     """
     def git(*args: str) -> None:
         subprocess.run(["git", "-C", str(target), *args], check=True, timeout=timeout, capture_output=True)
@@ -79,10 +86,14 @@ def clone_pinned(target: Path, url: str, sha: str, timeout: float = 300.0) -> No
     target.mkdir(parents=True, exist_ok=False)
     subprocess.run(["git", "init", "-q", str(target)], check=True, timeout=timeout, capture_output=True)
     git("remote", "add", "origin", url)
+    blobs: Tuple[str, ...] = ()
+    if sparse:
+        git("sparse-checkout", "set", "--cone", *sparse)
+        blobs = ("--filter=blob:none",)  # the checkout then fetches only the sparse files
     try:
-        git("fetch", "-q", "--depth", "1", "origin", sha)
+        git("fetch", "-q", "--depth", "1", *blobs, "origin", sha)
     except subprocess.CalledProcessError:
-        git("fetch", "-q", "origin")
+        git("fetch", "-q", *blobs, "origin")
         git("checkout", "-q", "--detach", sha)
         return
     git("checkout", "-q", "--detach", "FETCH_HEAD")
@@ -94,7 +105,7 @@ def _clone(root: Path, name: str) -> Optional[Path]:
     target = root / name
     url, sha = REPOS[name]
     try:
-        clone_pinned(target, url, sha)
+        clone_pinned(target, url, sha, SPARSE.get(name))
     except Exception:  # noqa: BLE001 - offline, blocked or git missing; the caller skips
         shutil.rmtree(target, ignore_errors=True)
         return None
