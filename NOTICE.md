@@ -3,7 +3,9 @@
 gnnote is released under the MIT License (see `LICENSE`). It is a clean-room
 implementation written from the byte-level research notes in `docs/`.
 
-* Parts of the GoodNotes container synthesis (event ordering and record shapes) are
+* Parts of the GoodNotes container synthesis (event ordering and record shapes) and of the
+  PencilKit decoder `gnnote/pencilkit.py` (the `PKDrawing` container layout, the channel table
+  and the decoding of the channel values, from inkterop's `formats/pencilkit.py`) are
   adapted from **inkterop** (https://github.com/cable729/inkterop), MIT License,
   Copyright (c) 2026 Caleb (cable729). The MIT permission notice of inkterop applies to the
   adapted parts; it is reproduced here as that licence requires: "Permission is hereby
@@ -14,6 +16,19 @@ implementation written from the byte-level research notes in `docs/`.
   is furnished to do so, subject to the following conditions: The above copyright notice and
   this permission notice shall be included in all copies or substantial portions of the
   Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND."
+* The PencilKit format description in `docs/collanote.md` section 5 builds on inkterop's
+  `docs/formats/pencilkit.md` by Caleb (cable729), licensed CC BY 4.0
+  (https://creativecommons.org/licenses/by/4.0/); the stroke transform, deleted-stroke and
+  version-2 additions are gnnote's own findings. The tests read inkterop's PencilKit fixtures
+  (`core/tests/fixtures/pkdrawing/`, dedicated to the public domain under CC0 1.0) from the
+  pinned inkterop checkout; they are not copied into this repository.
+* **collanote_cnote_to_pdf_converter** (https://github.com/alarsama/collanote_cnote_to_pdf_converter,
+  MIT, JavaScript) informed documented CollaNote facts only (the legacy-page coordinate
+  heuristic, the audio fields); no code was copied.
+* CollaNote and PencilKit sample files from repositories without a licence
+  (`enisogdum/YTU-Archive`, `r987r/Flashcard`, a notebook in
+  `Kinjalrk2k/100-Days-of-Machine-Learning-Campus-X`) are test inputs only: the test suite
+  fetches them at pinned commits and they are never committed or redistributed.
 * `gnnote/applelz4.py` shares its module name and the names of its public helpers with the
   corresponding module of goodparse (the names follow Apple's `libcompression` terminology);
   its implementation was written from `docs/ecosystem.md` section 3 and the LZ4 block format
