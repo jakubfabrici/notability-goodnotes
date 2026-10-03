@@ -209,6 +209,20 @@ body {
   color: var(--text);
 }
 .number input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.number select {
+  flex: none;
+  min-width: 140px;
+  max-width: 60%;
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.number select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.number:has(#target) { margin-bottom: 10px; }
+.supported { font-size: 13px; }
 
 /* buttons */
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }

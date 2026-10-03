@@ -148,7 +148,7 @@ def test_convert_failures_exit_one(tmp_path: Path, capsys: pytest.CaptureFixture
     junk = tmp_path / "junk.txt"
     junk.write_bytes(b"hello")
     assert main(["convert", str(junk)]) == 1
-    assert "neither" in capsys.readouterr().err
+    assert "not a supported note file" in capsys.readouterr().err
     bad = tmp_path / "bad.note"
     bad.write_bytes(b"PK\x03\x04 not really a zip")
     assert main(["convert", str(bad)]) == 1

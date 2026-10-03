@@ -4,25 +4,25 @@ This module is the only entry point the CLI, the HTTP server and the browser wor
 It stays import-light (the readers and writers are imported lazily) so that
 ``from gnnote.convert import convert, Options`` is cheap under Pyodide.
 
-Formats are identified by ``"goodnotes"`` and ``"notability"``.  A ``.goodnotes`` file is a
-ZIP with ``schema.pb`` / ``index.notes.pb`` at its root; a ``.note`` file is a ZIP holding
-``<name>/Session.plist``.  :func:`detect_format` looks at the content first (so a renamed or
-``.zip``-suffixed file still converts) and falls back to the file extension.
+Formats are the ids registered in :mod:`gnnote.formats` (``"goodnotes"``, ``"notability"``,
+...).  :func:`detect_format` asks every format's content sniffer first (so a renamed or
+``.zip``-suffixed file still converts) and falls back to the file extension.  The target is
+``Options.target``; without one, GoodNotes and Notability swap and every other app goes to
+Notability (:func:`gnnote.formats.default_target`).
 """
 from __future__ import annotations
 
-import io
 import os
-import zipfile
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from . import formats as _formats
 from .model import Document
 
 GOODNOTES = "goodnotes"
 NOTABILITY = "notability"
 
-EXTENSIONS: Dict[str, str] = {GOODNOTES: ".goodnotes", NOTABILITY: ".note"}
+EXTENSIONS: Dict[str, str] = {f.id: f.extension for f in _formats.FORMATS.values()}
 PAPER_MODES = ("plain", "pdf")
 
 __all__ = ["Options", "ConvertResult", "detect_format", "to_document", "convert",
@@ -42,6 +42,8 @@ class Options:
     with a warning when unavailable).
     ``title``: override the note / notebook name.
     ``notability_page_width``: ``pageWidthInDocumentCoordsKey`` written into ``.note`` files.
+    ``target``: id of the output format (see :mod:`gnnote.formats`); ``None`` picks the
+    default target for the source format.
     """
 
     paper: str = "plain"
@@ -50,9 +52,14 @@ class Options:
     ribbon: bool = False
     title: Optional[str] = None
     notability_page_width: float = 574.0
+    target: Optional[str] = None
 
     def validate(self) -> None:
         """Raise :class:`ValueError` for values the writers would not understand."""
+        if self.target is not None:
+            fmt = _formats.get(self.target)
+            if not fmt.writable:
+                raise ValueError(f"{fmt.name} files cannot be written yet")
         if self.paper not in PAPER_MODES:
             raise ValueError(f"paper must be one of {', '.join(PAPER_MODES)}; got {self.paper!r}")
         if self.simplify < 0:
@@ -74,70 +81,50 @@ class ConvertResult:
 
 
 def other_format(fmt: str) -> str:
-    """The conversion target for a source format."""
-    if fmt == GOODNOTES:
-        return NOTABILITY
-    if fmt == NOTABILITY:
-        return GOODNOTES
-    raise ValueError(f"unknown format {fmt!r}")
-
-
-def _format_from_extension(filename: str) -> Optional[str]:
-    ext = os.path.splitext(os.path.basename(filename or ""))[1].lower()
-    for fmt, known in EXTENSIONS.items():
-        if ext == known:
-            return fmt
-    return None
+    """The default conversion target for a source format."""
+    _formats.get(fmt)
+    return _formats.default_target(fmt)
 
 
 def _format_from_content(data: bytes) -> Optional[str]:
     if not isinstance(data, (bytes, bytearray, memoryview)):
         raise TypeError("data must be bytes")
     data = bytes(data)
-    if not data.startswith(b"PK"):
-        return None
-    try:
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            names = zf.namelist()
-    except (zipfile.BadZipFile, OSError, ValueError, RuntimeError):
-        return None
-    if any(n in ("schema.pb", "index.notes.pb") for n in names):
-        return GOODNOTES
-    if any(n.startswith("notes/") or n.startswith("attachments/") for n in names) and \
-            any(n.endswith(".pb") for n in names):
-        return GOODNOTES
-    for n in names:
-        if n == "Session.plist" or n.endswith("/Session.plist"):
-            return NOTABILITY
+    names = _formats.sniff_zip_names(data)
+    for fmt in _formats.readable():
+        try:
+            if fmt.sniff(data, names):
+                return fmt.id
+        except Exception:  # noqa: BLE001 - a sniffer must never break detection of the others
+            continue
     return None
 
 
-def detect_format(filename: str, data: bytes) -> str:
-    """Return ``"goodnotes"`` or ``"notability"`` for ``data`` named ``filename``.
+def _supported_extensions() -> str:
+    exts = [e for f in _formats.readable() for e in f.input_extensions]
+    return ", ".join(exts[:-1]) + (" or " + exts[-1] if len(exts) > 1 else "".join(exts))
 
-    The ZIP content decides when it is recognisable; otherwise the extension
-    (``.goodnotes`` / ``.note``) decides.  :class:`ValueError` when neither matches.
+
+def detect_format(filename: str, data: bytes) -> str:
+    """Return the format id of ``data`` named ``filename`` (e.g. ``"goodnotes"``).
+
+    The content decides when a format recognises it; otherwise the file extension decides.
+    :class:`ValueError` when neither matches a readable format.
     """
     by_content = _format_from_content(data)
     if by_content is not None:
         return by_content
-    by_ext = _format_from_extension(filename)
-    if by_ext is not None:
-        return by_ext
-    raise ValueError(f"{os.path.basename(filename) or 'input'} is neither a .goodnotes nor a .note file")
+    by_ext = _formats.format_for_extension(filename)
+    if by_ext is not None and by_ext.readable:
+        return by_ext.id
+    raise ValueError(f"{os.path.basename(filename) or 'input'} is not a supported note file "
+                     f"(expected {_supported_extensions()})")
 
 
 def to_document(data: bytes, filename: str) -> Document:
-    """Read either format into the shared :class:`~gnnote.model.Document` model."""
-    fmt = detect_format(filename, data)
-    if fmt == GOODNOTES:
-        from .goodnotes.reader import read_goodnotes
-        doc = read_goodnotes(bytes(data))
-    else:
-        from .notability.reader import read_note
-        doc = read_note(bytes(data))
-    doc.source_format = fmt
-    return doc
+    """Read any supported format into the shared :class:`~gnnote.model.Document` model."""
+    fmt = _formats.get(detect_format(filename, data))
+    return fmt.read(bytes(data))
 
 
 def document_stats(doc: Document) -> Dict[str, int]:
@@ -163,7 +150,7 @@ def output_filename(filename: str, target: str) -> str:
     stem, ext = os.path.splitext(base)
     if not stem:  # e.g. ".note"
         stem = base
-    return stem + EXTENSIONS[target]
+    return stem + _formats.get(target).extension
 
 
 def _dedupe(items: List[str]) -> List[str]:
@@ -177,24 +164,22 @@ def _dedupe(items: List[str]) -> List[str]:
 
 
 def convert(data: bytes, filename: str, options: Optional[Options] = None) -> ConvertResult:
-    """Convert ``data`` (a ``.goodnotes`` or ``.note`` file) to the other format.
+    """Convert ``data`` to ``options.target`` (default: see :func:`other_format`).
 
-    Raises :class:`ValueError` when the input is neither format or the options are invalid;
-    anything the readers cannot interpret becomes a warning rather than an exception.
+    Raises :class:`ValueError` when the input is not a supported format, the target equals
+    the source or the options are invalid; anything the readers cannot interpret becomes a
+    warning rather than an exception.
     """
     options = options or Options()
     options.validate()
     source = detect_format(filename, data)
-    target = other_format(source)
-    doc = to_document(data, filename)
+    target = options.target or _formats.default_target(source)
+    if target == source:
+        raise ValueError(f"the file already is a {_formats.get(source).name} file; choose another target")
+    doc = _formats.get(source).read(bytes(data))
     if options.title:
         doc.title = str(options.title)
-    if target == NOTABILITY:
-        from .notability.writer import write_note
-        out = write_note(doc, options)
-    else:
-        from .goodnotes.writer import write_goodnotes
-        out = write_goodnotes(doc, options)
+    out = _formats.get(target).write(doc, options)
     return ConvertResult(
         data=out,
         filename=output_filename(filename, target),

@@ -8,9 +8,9 @@
 // (vendored build), else from the jsDelivr CDN.
 
 import { t, applyLanguage, initialLang, rememberLang, currentLang } from "./i18n.js";
+import { FORMATS } from "./formats.js";
 
 const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
-const EXT_RE = /\.(goodnotes|note)$/i;
 const STAT_ORDER = ["pages", "strokes", "images", "texts", "pdfs"];
 
 const $ = (id) => document.getElementById(id);
@@ -22,6 +22,8 @@ const el = {
   fileInfo: $("file-info"),
   fileName: $("file-name"),
   fileDirection: $("file-direction"),
+  target: $("target"),
+  supported: $("supported"),
   fileError: $("file-error"),
   paperFieldset: $("paper-fieldset"),
   paperNa: $("paper-na"),
@@ -129,17 +131,53 @@ function setEngineStatus() {
   el.engineStatus.textContent = t(key);
 }
 
+function formatById(id) {
+  return FORMATS.find((f) => f.id === id) || null;
+}
+
+function readableExtensions() {
+  return FORMATS.filter((f) => f.readable).flatMap((f) => f.inputExtensions);
+}
+
 function sourceFormatOf(name) {
-  const m = EXT_RE.exec(name || "");
-  if (!m) return null;
-  return m[1].toLowerCase() === "goodnotes" ? "goodnotes" : "notability";
+  const lower = String(name || "").toLowerCase();
+  const fmt = FORMATS.find((f) => f.readable && f.inputExtensions.some((ext) => lower.endsWith(ext)));
+  return fmt ? fmt.id : null;
+}
+
+/** Fill the "Convert to" list for a source format, keeping the previous choice when possible. */
+function populateTargets(source) {
+  const previous = el.target.value;
+  el.target.textContent = "";
+  for (const f of FORMATS) {
+    if (!f.writable || f.id === source) continue;
+    const opt = document.createElement("option");
+    opt.value = f.id;
+    opt.textContent = f.name;
+    el.target.appendChild(opt);
+  }
+  const ids = Array.from(el.target.options, (o) => o.value);
+  const src = formatById(source);
+  const wanted = [previous, src && src.defaultTarget].find((id) => id && ids.includes(id));
+  if (wanted) el.target.value = wanted;
+}
+
+function updateDirection() {
+  const src = formatById(state.file ? sourceFormatOf(state.file.name) : null);
+  const dst = formatById(el.target.value);
+  el.fileDirection.textContent = src && dst ? t("file.direction", { from: src.name, to: dst.name }) : "";
+  const paperApplies = !!dst && dst.id === "notability";
+  el.paperFieldset.disabled = !paperApplies;
+  show(el.paperNa, !paperApplies);
 }
 
 function readOptions() {
   const paper = (document.querySelector('input[name="paper"]:checked') || {}).value || "plain";
   let simplify = parseFloat(el.simplify.value);
   if (!isFinite(simplify) || simplify < 0) simplify = 0;
-  return { paper: paper, pressure: !!el.pressure.checked, simplify: simplify };
+  const options = { paper: paper, pressure: !!el.pressure.checked, simplify: simplify };
+  if (el.target.value) options.target = el.target.value;
+  return options;
 }
 
 function updateConvertButton() {
@@ -159,6 +197,7 @@ function setLanguage(lang) {
   applyLanguage(lang);
   rememberLang(lang);
   setEngineStatus();
+  renderSupported();
   if (state.file) describeFile(state.file);
   if (state.last) renderResult(state.last);
 }
@@ -170,13 +209,17 @@ el.langToggle.addEventListener("click", () => {
 // ---------- file selection ----------
 
 function describeFile(file) {
-  const fmt = sourceFormatOf(file.name);
   el.fileName.textContent = t("file.selected", { name: file.name, size: formatBytes(file.size) });
-  el.fileDirection.textContent = fmt ? t("file.direction." + fmt) : "";
+  populateTargets(sourceFormatOf(file.name));
+  updateDirection();
   show(el.fileInfo, true);
-  const isNote = fmt === "notability";
-  el.paperFieldset.disabled = isNote;
-  show(el.paperNa, isNote);
+}
+
+el.target.addEventListener("change", updateDirection);
+
+function renderSupported() {
+  const names = FORMATS.filter((f) => f.readable).map((f) => f.name);
+  el.supported.textContent = t("app.supported", { list: names.join(", ") });
 }
 
 function acceptFile(file) {
@@ -188,7 +231,7 @@ function acceptFile(file) {
   if (!sourceFormatOf(file.name)) {
     state.file = null;
     show(el.fileInfo, false);
-    el.fileError.textContent = t("file.badext");
+    el.fileError.textContent = t("file.badext", { list: readableExtensions().join(", ") });
     show(el.fileError, true);
     updateConvertButton();
     return;
@@ -397,6 +440,7 @@ async function convertViaServer(file, options) {
     pressure: options.pressure ? "true" : "false",
     simplify: String(options.simplify),
   });
+  if (options.target) q.set("to", options.target);
   const form = new FormData();
   form.append("file", file, file.name);
   const r = await fetch(new URL("api/convert?" + q.toString(), location.href).href, {
@@ -440,22 +484,29 @@ async function convertViaServer(file, options) {
       name = hinted;
     }
   }
-  if (!name) name = swapExtension(file.name);
   const src = sourceFormatOf(file.name);
+  const srcFmt = formatById(src);
+  const target = options.target || (srcFmt && srcFmt.defaultTarget) || "notability";
+  if (!name) name = swapExtension(file.name, target);
   return {
     name: name,
     blob: blob,
     warnings: Array.isArray(warnings) ? warnings : [],
     stats: stats && typeof stats === "object" ? stats : {},
     sourceFormat: src,
-    targetFormat: src === "goodnotes" ? "notability" : "goodnotes",
+    targetFormat: target,
   };
 }
 
-function swapExtension(name) {
-  return /\.goodnotes$/i.test(name)
-    ? name.replace(/\.goodnotes$/i, ".note")
-    : name.replace(/\.note$/i, ".goodnotes");
+function swapExtension(name, target) {
+  const dst = formatById(target);
+  const src = formatById(sourceFormatOf(name));
+  let stem = name;
+  if (src) {
+    const ext = src.inputExtensions.find((e) => name.toLowerCase().endsWith(e));
+    if (ext) stem = name.slice(0, name.length - ext.length);
+  }
+  return stem + (dst ? dst.extension : "");
 }
 
 async function convertViaWorker(file, options) {
@@ -488,7 +539,8 @@ async function convertViaWorker(file, options) {
   });
   worker.postMessage({ type: "convert", id: id, name: file.name, buffer: buffer, options: options }, [buffer]);
   const msg = await done;
-  const mime = msg.targetFormat === "notability" ? "application/x-notability-note" : "application/x-goodnotes";
+  const mime = { notability: "application/x-notability-note", goodnotes: "application/x-goodnotes" }[msg.targetFormat]
+    || "application/octet-stream";
   return {
     name: msg.name,
     blob: new Blob([msg.buffer], { type: mime }),
@@ -666,6 +718,8 @@ function loadVersion() {
 
 applyLanguage(initialLang());
 setEngineStatus();
+renderSupported();
+updateDirection();
 updateConvertButton();
 loadVersion();
 detectEngine();

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Convert GoodNotes (.goodnotes) and Notability (.note) files in the browser, handwriting stays editable.">
-  <title>gnnote – GoodNotes ⇄ Notability</title>
+  <meta name="description" content="Convert notes between handwriting apps in the browser, handwriting stays editable.">
+  <title>gnnote – prevod poznámok medzi aplikáciami</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b6fd6'/%3E%3Cpath d='M7 20c4-10 8 4 12-6s5 2 7 0' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 </head>
@@ -23,11 +23,14 @@
 
   <main class="page">
     <p class="tagline" data-i18n="app.tagline"></p>
+    <p class="tagline supported" id="supported"></p>
 
     <!-- 1. file -->
     <section class="card" id="step-file">
       <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-labelledby="drop-label">
-        <input id="file" type="file" accept=".goodnotes,.note" class="visually-hidden" data-i18n-aria="drop.label">
+        <!-- no accept filter: iOS greys out files whose extension it maps to no known type;
+             the page checks the extension itself -->
+        <input id="file" type="file" class="visually-hidden" data-i18n-aria="drop.label">
         <span class="drop-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>
@@ -47,6 +50,12 @@
     <!-- 2. options -->
     <section class="card" id="step-options">
       <h2 data-i18n="options.heading"></h2>
+      <label class="number" for="target">
+        <span class="radio-body">
+          <span class="radio-title" data-i18n="options.target"></span>
+        </span>
+        <select id="target"></select>
+      </label>
       <fieldset id="paper-fieldset" class="fieldset">
         <legend data-i18n="options.paper.legend"></legend>
         <label class="radio">

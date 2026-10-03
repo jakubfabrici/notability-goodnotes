@@ -2,11 +2,15 @@
 
 Sub-commands::
 
-    gnnote convert IN [-o OUT] [--paper plain|pdf] [--no-pressure] [--simplify PT]
-                   [--ribbon] [--title T]
+    gnnote convert IN [-o OUT] [--to FORMAT] [--paper plain|pdf] [--no-pressure]
+                   [--simplify PT] [--ribbon] [--title T]
     gnnote info FILE [--json]
-    gnnote batch DIR [-o OUTDIR] [--to goodnotes|notability] [--paper plain|pdf]
-                 [--no-pressure] [--simplify PT]
+    gnnote batch DIR [-o OUTDIR] [--to FORMAT] [--paper plain|pdf] [--no-pressure]
+                 [--simplify PT]
+    gnnote formats
+
+FORMAT is a format id from ``gnnote formats`` (``goodnotes``, ``notability``, ...).  Without
+``--to`` GoodNotes and Notability files swap and other apps' files become Notability notes.
 
 Exit codes: 0 success, 1 a conversion failed (or a file could not be read), 2 usage error.
 """
@@ -20,7 +24,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import __version__
-from .convert import EXTENSIONS, GOODNOTES, NOTABILITY, Options, convert, detect_format, document_stats, to_document
+from . import formats as _formats
+from .convert import Options, convert, detect_format, document_stats, to_document
 
 __all__ = ["main", "build_parser", "describe"]
 
@@ -37,6 +42,10 @@ class _UsageError(Exception):
 
 
 def _add_write_options(parser: argparse.ArgumentParser, ribbon: bool = True, title: bool = True) -> None:
+    targets = [f.id for f in _formats.writable()]
+    parser.add_argument("--to", dest="target", choices=targets, default=None, metavar="FORMAT",
+                        help="output format: " + ", ".join(targets) + " (default: GoodNotes and Notability "
+                             "swap, other apps go to Notability)")
     parser.add_argument("--paper", choices=("plain", "pdf"), default="plain",
                         help="GoodNotes -> Notability: 'plain' turns stock paper into Notability paper "
                              "(default); 'pdf' keeps every page as a PDF-backed page")
@@ -52,15 +61,15 @@ def _add_write_options(parser: argparse.ArgumentParser, ribbon: bool = True, tit
 
 
 def build_parser() -> argparse.ArgumentParser:
+    names = ", ".join(f"{f.name} ({f.extension})" for f in _formats.readable())
     parser = _ArgumentParser(prog="gnnote",
-                             description="Convert between GoodNotes (.goodnotes) and Notability (.note) "
-                                         "files, keeping handwriting editable.")
+                             description=f"Convert notes between {names} files, keeping handwriting editable.")
     parser.add_argument("--version", action="version", version=f"gnnote {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
     sub.required = True
 
-    p_convert = sub.add_parser("convert", help="convert one file to the other format")
-    p_convert.add_argument("input", metavar="IN", help=".goodnotes or .note file")
+    p_convert = sub.add_parser("convert", help="convert one file to another app's format")
+    p_convert.add_argument("input", metavar="IN", help="a note file of a supported app")
     p_convert.add_argument("-o", "--output", metavar="OUT", default=None,
                            help="output file or directory (default: next to IN, extension swapped)")
     _add_write_options(p_convert)
@@ -73,15 +82,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_batch.add_argument("directory", metavar="DIR")
     p_batch.add_argument("-o", "--output", metavar="OUTDIR", default=None,
                          help="directory for the converted files (default: DIR)")
-    p_batch.add_argument("--to", dest="target", choices=(GOODNOTES, NOTABILITY), default=None,
-                         help="only produce this format (default: convert both kinds of file)")
     _add_write_options(p_batch, ribbon=False, title=False)
+
+    sub.add_parser("formats", help="list the supported apps and what can be read and written")
     return parser
 
 
 def _options_from_args(args: argparse.Namespace) -> Options:
     return Options(paper=args.paper, pressure=args.pressure, simplify=args.simplify,
-                   ribbon=bool(getattr(args, "ribbon", False)), title=getattr(args, "title", None))
+                   ribbon=bool(getattr(args, "ribbon", False)), title=getattr(args, "title", None),
+                   target=getattr(args, "target", None))
 
 
 def _output_path(source: Path, filename: str, output: Optional[str]) -> Path:
@@ -209,9 +219,8 @@ def _cmd_batch(args: argparse.Namespace, out: Any, err: Any) -> int:
         print(f"error: {directory} is not a directory", file=err)
         return 1
     out_dir = Path(args.output) if args.output else directory
-    wanted = {EXTENSIONS[GOODNOTES]: NOTABILITY, EXTENSIONS[NOTABILITY]: GOODNOTES}
-    if args.target:
-        wanted = {ext: tgt for ext, tgt in wanted.items() if tgt == args.target}
+    # every readable app's files, except files already in the requested target format
+    wanted = {ext for f in _formats.readable() if f.id != args.target for ext in f.input_extensions}
     files = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in wanted)
     if not files:
         print(f"no {' or '.join(sorted(wanted))} files in {directory}", file=out)
@@ -237,6 +246,14 @@ def _cmd_batch(args: argparse.Namespace, out: Any, err: Any) -> int:
     return 1 if failed else 0
 
 
+def _cmd_formats(args: argparse.Namespace, out: Any, err: Any) -> int:
+    for f in _formats.FORMATS.values():
+        modes = "read and write" if f.readable and f.writable else ("read only" if f.readable else "write only")
+        exts = ", ".join(f.input_extensions)
+        print(f"{f.id:<12} {f.name:<12} {exts:<14} {modes}", file=out)
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run the CLI; returns the exit status (0 ok, 1 failure, 2 usage) instead of exiting."""
     parser = build_parser()
@@ -247,7 +264,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
     except SystemExit as exc:  # --help / --version
         return int(exc.code or 0)
-    handlers = {"convert": _cmd_convert, "info": _cmd_info, "batch": _cmd_batch}
+    handlers = {"convert": _cmd_convert, "info": _cmd_info, "batch": _cmd_batch, "formats": _cmd_formats}
     return handlers[args.command](args, sys.stdout, sys.stderr)
 
 

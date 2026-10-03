@@ -11,7 +11,7 @@
 //          [--browser PATH]           Chromium executable (default: $PW_CHROMIUM, /opt/pw-browsers/chromium
 //                                     when it exists, else Playwright's own Chromium)
 //          [--timeout MS]             overall conversion timeout (default: 300000)
-//          [--paper plain|pdf] [--no-pressure] [--simplify N]
+//          [--to FORMAT] [--paper plain|pdf] [--no-pressure] [--simplify N]
 //          [--lang sk|en]             click the language toggle to this language first
 //          [--verbose]                echo browser console messages
 //
@@ -39,6 +39,7 @@ function parseArgs(argv) {
     browser: process.env.PW_CHROMIUM || (fs.existsSync("/opt/pw-browsers/chromium") ? "/opt/pw-browsers/chromium" : null),
     timeout: 300000,
     paper: null,
+    to: null,
     pressure: true,
     simplify: null,
     lang: null,
@@ -58,6 +59,7 @@ function parseArgs(argv) {
       case "--browser": args.browser = next(); break;
       case "--timeout": args.timeout = parseInt(next(), 10); break;
       case "--paper": args.paper = next(); break;
+      case "--to": args.to = next(); break;
       case "--no-pressure": args.pressure = false; break;
       case "--simplify": args.simplify = next(); break;
       case "--lang": args.lang = next(); break;
@@ -188,6 +190,7 @@ async function main() {
       if (current !== args.lang) await page.click("#lang-toggle");
     }
     await page.setInputFiles("#file", input);
+    if (args.to) await page.selectOption("#target", args.to);
     if (args.paper) await page.check('input[name="paper"][value="' + args.paper + '"]');
     if (!args.pressure) await page.uncheck("#pressure");
     if (args.simplify !== null) await page.fill("#simplify", String(args.simplify));

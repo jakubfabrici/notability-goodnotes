@@ -16,10 +16,11 @@ What the server speaks
   files only, member names ``gnnote/...``) built on first request and cached in
   memory; it is what the browser worker unpacks on ``sys.path``.
 * ``GET /version.json`` -- served from disk when the build wrote one, else generated.
-* ``GET /api/health`` -> ``{"ok": true, "version": "<gnnote version>"}``.
+* ``GET /api/health`` -> ``{"ok": true, "version": ..., "maxUpload": ..., "formats": [...]}``.
 * ``POST /api/convert`` -- ``multipart/form-data`` with a ``file`` part (the
   ``.goodnotes``/``.note`` bytes, filename taken from the part) and optional parameters
-  ``paper`` (``plain``|``pdf``), ``pressure`` (bool), ``simplify`` (float pt), ``title``
+  ``to`` (target format id), ``paper`` (``plain``|``pdf``), ``pressure`` (bool),
+  ``simplify`` (float pt), ``title``
   (string), given either as form fields or as query-string parameters (form fields
   win).  Bodies above ``MAX_UPLOAD`` (300 MB) are refused with 413 before being read.
   On success the converted file is returned as ``application/octet-stream`` with
@@ -326,6 +327,13 @@ def build_options(params: Dict[str, str]) -> Dict[str, Any]:
     title = params.get("title", "").strip()
     if title:
         kwargs["title"] = title[:200]
+    target = (params.get("to") or params.get("target") or "").strip().lower()
+    if target:
+        from . import formats as _formats  # stdlib-only, cheap
+        ids = [f.id for f in _formats.writable()]
+        if target not in ids:
+            raise ValueError("to must be one of " + ", ".join(ids))
+        kwargs["target"] = target
     return kwargs
 
 
@@ -407,7 +415,9 @@ class GnNoteHandler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         path = unquote(url.path)
         if path == "/api/health":
-            self._send_json(HTTPStatus.OK, {"ok": True, "version": __version__, "maxUpload": MAX_UPLOAD},
+            from . import formats as _formats
+            self._send_json(HTTPStatus.OK, {"ok": True, "version": __version__, "maxUpload": MAX_UPLOAD,
+                                            "formats": _formats.formats_info()},
                             {"Cache-Control": "no-store"})
             return
         if path.startswith("/api/"):
