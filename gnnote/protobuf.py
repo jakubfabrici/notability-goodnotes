@@ -91,12 +91,18 @@ def varint(n: int) -> bytes:
 # --------------------------------------------------------------------------- decoding
 
 
-def decode_message(data: bytes) -> List[Field]:
-    """Decode a whole message into its fields, in file order.  Raises ``ValueError``."""
+def decode_message(data: bytes, max_fields: Optional[int] = None) -> List[Field]:
+    """Decode a whole message into its fields, in file order.  Raises ``ValueError``.
+
+    ``max_fields`` bounds the number of fields (a ``ValueError`` once exceeded), so a crafted
+    payload of millions of two-byte fields cannot cost unbounded memory.
+    """
     fields: List[Field] = []
     pos = 0
     n = len(data)
     while pos < n:
+        if max_fields is not None and len(fields) >= max_fields:
+            raise ValueError(f"message holds more than {max_fields} fields")
         key, pos = read_varint(data, pos)
         number = key >> 3
         wire_type = key & 7
