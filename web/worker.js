@@ -23,6 +23,8 @@ const PACKAGE_DIR = "/gnnote-pkg";
 
 let pyodide = null;
 let convertFn = null;
+let releaseFn = null;
+let versionFn = null;
 let initPromise = null;
 
 function post(msg, transfer) {
@@ -168,16 +170,31 @@ def _gn_version():
         return ""
 `;
 
+const DEFAULT_CDN = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
+
+async function loadEngine(base) {
+  const mod = await import(/* webpackIgnore: true */ base + "pyodide.mjs");
+  return mod.loadPyodide({ indexURL: base });
+}
+
 async function init(msg) {
-  const base = String(msg.pyodideBase || "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/");
+  const base = String(msg.pyodideBase || DEFAULT_CDN);
+  const cdn = String(msg.pyodideCdn || DEFAULT_CDN);
   const packageUrl = String(msg.packageUrl || "gnnote.zip");
   progress("engine", "loading", { loaded: 0, total: 0 });
 
   const uninstall = installFetchCounter();
-  let mod;
   try {
-    mod = await import(/* webpackIgnore: true */ base + "pyodide.mjs");
-    pyodide = await mod.loadPyodide({ indexURL: base });
+    try {
+      pyodide = await loadEngine(base);
+    } catch (e) {
+      // A vendored copy that does not load (missing files, a host answering HTML for
+      // pyodide.mjs) must not leave the page without an engine: retry once from the CDN.
+      if (base === cdn) throw e;
+      console.warn("gnnote: Pyodide at " + base + " failed to load (" + (e && e.message ? e.message : e) + "); retrying from " + cdn);
+      progress("engine", "loading", { loaded: 0, total: 0 });
+      pyodide = await loadEngine(cdn);
+    }
   } finally {
     uninstall();
   }
@@ -192,8 +209,11 @@ async function init(msg) {
   pyodide.unpackArchive(zip, "zip", { extractDir: PACKAGE_DIR });
   pyodide.runPython("import sys\nif " + JSON.stringify(PACKAGE_DIR) + " not in sys.path:\n    sys.path.insert(0, " + JSON.stringify(PACKAGE_DIR) + ")\n");
   pyodide.runPython(BRIDGE);
+  // the three bridge functions are fetched once: every globals.get() creates a PyProxy
   convertFn = pyodide.globals.get("_gn_convert");
-  const version = pyodide.globals.get("_gn_version")();
+  releaseFn = pyodide.globals.get("_gn_release");
+  versionFn = pyodide.globals.get("_gn_version");
+  const version = versionFn();
   const python = pyodide.runPython("import sys; sys.version.split()[0]");
   post({ type: "ready", python: String(python), version: String(version || "") });
 }
@@ -229,7 +249,7 @@ async function convert(msg) {
   } finally {
     // free Python-side bytes whatever happened
     try {
-      pyodide.globals.get("_gn_release")();
+      releaseFn();
     } catch (e) {
       /* ignore */
     }
@@ -269,6 +289,8 @@ self.onmessage = async (event) => {
       initPromise = null; // allow the main thread to retry with another base URL
       pyodide = null;
       convertFn = null;
+      releaseFn = null;
+      versionFn = null;
     }
     const info = errorInfo(e);
     post({ type: "error", id: msg.id, stage: msg.type, message: info.message, traceback: info.traceback });

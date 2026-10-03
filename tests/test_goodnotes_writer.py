@@ -23,6 +23,7 @@ import pytest
 
 from gnnote import applelz4, pdfutil, protobuf as pb, rtf, tpl
 from gnnote.goodnotes import constants as C
+from gnnote.goodnotes.reader import read_goodnotes
 from gnnote.goodnotes.writer import (
     DASH_LENGTH, QUAD_MAX_DEPTH, QUAD_TOLERANCE, _cubic_to_quads, build_members, displayed_box,
     fill_matches_parent, order_key, stroke_to_flat, write_goodnotes,
@@ -1067,3 +1068,13 @@ def test_oracle_goodparse(samples, tmp_path):
             assert channels == pytest.approx([c * 255 for c in stroke.color[:3]], abs=0.51)
             for x, y, _pr in s["points"]:
                 assert dist_to_polyline((x, y), poly) < 0.6
+
+
+def test_generated_paper_styles_read_back():
+    """Lined / grid / dotted paper drawn by make_paper_pdf ('re' operators) classifies as itself."""
+    for style in ("plain", "lined", "grid", "dotted"):
+        for w, h in ((455.04, 588.45), (595.28, 841.89), (612.0, 792.0)):
+            back = read_goodnotes(write_goodnotes(Document(pages=[Page(w, h, paper=style)])))
+            page = back.pages[0]
+            assert page.template_is_builtin and page.paper == style, (style, w, h, page.paper)
+            assert (round(page.width, 2), round(page.height, 2)) == (round(w, 2), round(h, 2))

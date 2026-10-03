@@ -15,7 +15,7 @@ Evidence base (everything below was checked against these bytes, not recalled fr
 | `ref/goodparse/samples/Test5.pdf` (GoodNotes' own PDF export of Test5, Quartz "iOS 16.7.16") | ground truth for coordinates and widths |
 | `ref/goodparse/src/goodparse/{goodnotes,applelz4,protobuf}.py` | reference parser 1 |
 | `ref/parser-for-goodnotes/src/goodnotes_re/{stroke,tpl,compression,wire,page}.py` + `wiki/03`, `04`, `09` | reference parser 2 |
-| `scratchpad/experiments/gn_stroke_roundtrip.py` | independent decoder + re-encoder + verification with both parsers |
+| `scratchpad/experiments/gn_stroke_roundtrip.py` (session scratchpad, not committed; `gnnote/tpl.py` and `tests/test_tpl.py` supersede it) | independent decoder + re-encoder + verification with both parsers |
 
 Census of all 5677 strokes in the 9 samples (my own protobuf walk, `experiments/census.py`):
 
@@ -25,7 +25,7 @@ Census of all 5677 strokes in the 9 samples (my own protobuf walk, `experiments/
 | `vA(v)A(u)A(u)A(v)A(v)A(u)A(u)A(u)A(u)A(v)` | 34 | 24 | 1 | per-point-radius "ribbon" pen + prebuilt CGPath outline |
 | `vuA(v)A(S(uuuuu))A(S(uuuuuuuuuuu))A(S(uu))A(v)A(S(uu))A(S(uuuu))A(u)` | 8 | **25** | 5 | nib-angle pen (tool 25) |
 | `vuA(v)A(S(uu))A(S(uuuu))` (no trailing `vA(f)`) | 7 | 24 | absent | same as row 1, older sub-version (TPL word 0 = 1) |
-| `vuA(v)A(u)A(u)A(v)A(v)A(u)A(u)A(u)A(u)A(v)` | 1 | 24 | 4 | ribbon pen with a leading width word |
+| `vuA(v)A(u)A(u)A(v)A(v)A(u)A(u)A(u)A(u)A(v)` | 1 | 24 | 4 | ribbon pen with a leading width word; its panels are `(x1, y1, x2, y2, r1, r2)`, not `(x, y, r, x, y, r)` — the stroke's own CGPath arc centres and radii (`ex2.goodnotes`, 66 arcs) coincide with the spine only under that reading |
 
 Every one of the 5677 geometry blobs is exactly **one `bv41` block followed by `bv4$`**. No `bv4-`
 block and no multi-block stream was ever observed. There are zero trailing bytes after `bv4$`

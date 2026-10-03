@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from gnnote.model import Document, Image, Page, PdfBackground, Point, Stroke, TextBox, TextRun
+from gnnote.notability import x_inset
 from gnnote.notability.archivebuilder import (
     INT64_MAX, ArchiveBuilder, color_string, nsrgb_bytes, point_string, range_string, rect_string,
 )
@@ -24,6 +25,7 @@ from gnnote.notability.writer import (
 
 W = 574.0
 PLAIN_H = LEGACY_ASPECT * W
+X0 = x_inset(W)  # document x of the paper's left edge (-W * 20 / 768)
 GN_W, GN_H = 455.04, 588.45  # GoodNotes "standard" page
 
 
@@ -303,9 +305,9 @@ def test_synthetic_roundtrip(samples, tmp_path):
     s1 = W / GN_W
     y_of = [c["points"][0][1] for c in curves]
     x_of = [c["points"][0][0] for c in curves]
-    assert y_of[0] == pytest.approx(10 * s1, abs=0.05) and x_of[0] == pytest.approx(10 * s1, abs=0.05)
+    assert y_of[0] == pytest.approx(10 * s1, abs=0.05) and x_of[0] == pytest.approx(X0 + 10 * s1, abs=0.05)
     assert y_of[2] == pytest.approx(PLAIN_H + gap2 + 700 * W / 595.0, abs=0.05)
-    assert x_of[2] == pytest.approx(100 * W / 595.0, abs=0.05)
+    assert x_of[2] == pytest.approx(X0 + 100 * W / 595.0, abs=0.05)  # the inset applies to PDF pages too
     assert y_of[3] == pytest.approx(PLAIN_H + slot2 + 5 * s1, abs=0.05)
     assert y_of[4] == pytest.approx(PLAIN_H + slot2, abs=0.05)
     assert PLAIN_H + slot2 <= max(p[1] for p in curves[4]["points"]) <= PLAIN_H + slot2 + PLAIN_H
@@ -324,7 +326,7 @@ def test_synthetic_roundtrip(samples, tmp_path):
     media = a.array(a.get(rich, "mediaObjects"))
     assert [a.classname(m) for m in media] == ["ImageMediaObject", "TextBlockMediaObject"]
     img = media[0]
-    assert a.string(img["documentOrigin"]) == point_string(20 * s1, 200 * s1)
+    assert a.string(img["documentOrigin"]) == point_string(X0 + 20 * s1, 200 * s1)
     assert a.string(img["unscaledContentSize"]) == point_string(100 * s1, 60 * s1)
     snap = a.get(a.get(a.get(img, "figure"), "FigureBackgroundObjectKey"), "kImageObjectSnapshotKey")
     assert a.string(snap["relativePath"]) == "Images/Image .png" and snap["saveAsJPEG"] is False
@@ -357,19 +359,28 @@ def test_synthetic_roundtrip(samples, tmp_path):
     for name, w, h in (("thumb.png", 48, 63), ("thumb2x.png", 96, 126), ("thumb3x.png", 144, 189), ("thumb6x.png", 288, 378)):
         assert image_pixel_size(members(data)[name]) == (w, h)
 
-    # the scratchpad oracle reader, when available, agrees
+
+
+def test_synthetic_roundtrip_matches_scratchpad_oracle(samples, tmp_path):
+    """The session's independent oracle reader (not committed; GNNOTE_NOTEREADER) agrees."""
     oracle = load_notereader(samples)
-    if oracle is not None:
-        tmp = tmp_path / "synthetic.note"
-        tmp.write_bytes(data)
-        d = oracle.read_note(str(tmp))
-        assert len(d["curves"]) == 5 and d["width"] == W
-        assert [p["kind"] for p in d["pages"]] == ["blank", "pdf", "blank"]
-        bounds = oracle.page_bounds(d)
-        assert bounds[1] == (PLAIN_H, PLAIN_H + slot2)
-        assert all(bounds[i][0] <= c["points"][0][1] < bounds[i][1] for i, c in ((0, curves[0]), (1, curves[2]), (2, curves[3])))
-        assert [m["$class"] for m in d["media"]] == ["ImageMediaObject", "TextBlockMediaObject"]
-        assert d["media"][1]["text"] == "Hello\nworld"
+    if oracle is None:
+        pytest.skip("scratchpad oracle reader not available (set GNNOTE_NOTEREADER)")
+    doc = synthetic_document()
+    data = write_note(doc, Opts())
+    pl, a = load_session(data)
+    curves = parse_curves(a, hash_of(a, a.root))
+    slot2 = math.ceil(842.0 * W / 595.0)
+    tmp = tmp_path / "synthetic.note"
+    tmp.write_bytes(data)
+    d = oracle.read_note(str(tmp))
+    assert len(d["curves"]) == 5 and d["width"] == W
+    assert [p["kind"] for p in d["pages"]] == ["blank", "pdf", "blank"]
+    bounds = oracle.page_bounds(d)
+    assert bounds[1] == (PLAIN_H, PLAIN_H + slot2)
+    assert all(bounds[i][0] <= c["points"][0][1] < bounds[i][1] for i, c in ((0, curves[0]), (1, curves[2]), (2, curves[3])))
+    assert [m["$class"] for m in d["media"]] == ["ImageMediaObject", "TextBlockMediaObject"]
+    assert d["media"][1]["text"] == "Hello\nworld"
 
 
 def test_project_reader_roundtrip():
@@ -444,7 +455,7 @@ def test_pressure_off_and_simplify():
     pl, a = load_session(write_note(doc, Opts(simplify=0.5)))
     c = parse_curves(a, hash_of(a, a.root))[0]
     assert len(c["points"]) == 4  # a straight line collapses to one segment
-    assert c["points"][0] == pytest.approx((0, 0)) and c["points"][-1][0] == pytest.approx(100 * W / GN_W, abs=0.01)
+    assert c["points"][0] == pytest.approx((X0, 0)) and c["points"][-1][0] == pytest.approx(X0 + 100 * W / GN_W, abs=0.01)
 
 
 def test_bezier_input_kept_exactly():
@@ -453,7 +464,7 @@ def test_bezier_input_kept_exactly():
     doc = Document(pages=[Page(W, W * LEGACY_ASPECT, strokes=[Stroke(anchors, controls=controls)])])  # scale 1
     pl, a = load_session(write_note(doc, Opts()))
     c = parse_curves(a, hash_of(a, a.root))[0]
-    assert [tuple(round(v, 3) for v in pt) for pt in c["points"]] == [
+    assert [(round(x - X0, 3), round(y, 3)) for x, y in c["points"]] == [
         (10, 10), (20, 0), (40, 0), (50, 20), (60, 40), (80, 40), (90, 10)]
     assert doc.warnings == []
 
@@ -583,7 +594,7 @@ def test_text_box_rotation_and_alignment():
     assert [st["formattedStringTextAlignmentKey"] for st in stores] == [1, 2, 0]
     assert [m["rotationDegrees"] for m in media] == pytest.approx([math.radians(30.0), 0.0, 0.0])
     # unrotated boxes: origin = text frame minus the padding
-    assert parse_point(a.string(media[1]["documentOrigin"])) == pytest.approx((60 - TEXT_PAD_X, 140 - TEXT_PAD_Y))
+    assert parse_point(a.string(media[1]["documentOrigin"])) == pytest.approx((X0 + 60 - TEXT_PAD_X, 140 - TEXT_PAD_Y))
     # the rotated box turns about its centre in Notability, about its top-left corner in the
     # model: rotating the written box about its centre must bring the frame corner back to (60, 90)
     origin = parse_point(a.string(media[0]["documentOrigin"]))
@@ -594,8 +605,8 @@ def test_text_box_rotation_and_alignment():
     cx, cy = origin[0] + size[0] / 2, origin[1] + size[1] / 2
     lx, ly = TEXT_PAD_X - size[0] / 2, TEXT_PAD_Y - size[1] / 2  # frame corner, centre-relative
     corner = (cx + lx * math.cos(theta) - ly * math.sin(theta), cy + lx * math.sin(theta) + ly * math.cos(theta))
-    assert corner == pytest.approx((60.0, 90.0), abs=1e-6)
-    assert origin != pytest.approx((60 - TEXT_PAD_X, 90 - TEXT_PAD_Y))
+    assert corner == pytest.approx((X0 + 60.0, 90.0), abs=1e-6)
+    assert origin != pytest.approx((X0 + 60 - TEXT_PAD_X, 90 - TEXT_PAD_Y))
     assert doc.warnings == []
     # the helper is the identity for theta = 0 and for a pivot at the centre
     assert text_origin_for_centre_pivot((10, 20), (100, 50), (0, 0), 0.0) == pytest.approx((10, 20))
@@ -614,7 +625,7 @@ def test_image_rotation_in_radians_and_exif_warning():
     media = a.array(a.get(a.get(a.root, "richText"), "mediaObjects"))
     assert [m["rotationDegrees"] for m in media] == pytest.approx([math.pi / 2, math.radians(-15.0), math.pi / 2])
     # the native box is kept (Notability rotates about the centre itself); bytes untouched
-    assert parse_point(a.string(media[0]["documentOrigin"])) == pytest.approx((100, 50))
+    assert parse_point(a.string(media[0]["documentOrigin"])) == pytest.approx((X0 + 100, 50))
     assert parse_point(a.string(media[0]["unscaledContentSize"])) == pytest.approx((96, 64))
     assert a.string(a.get(media[0], "figure")["FigureCropRectKey"]) == "{{0, 0}, {96, 64}}"
     assert members(data)["Images/Image .jpg"] == photo

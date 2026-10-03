@@ -440,8 +440,15 @@ def _decode_ribbon(image: TplImage) -> Optional[RibbonStroke]:
                 raise ValueError("ribbon stroke begins with a continuation flag")
             tup = panel_pool[pi * p_stride:(pi + 1) * p_stride]
             pi += 1
-            p1 = (tup[0], tup[1], tup[2])
-            p2 = (tup[3], tup[4], tup[5])
+            if off:
+                # width-word variant (flags 2/3, erased or segmented ribbon strokes): the
+                # panel is (x1, y1, x2, y2, r1, r2); its own CGPath arc pool confirms the
+                # layout (docs/goodnotes-stroke.md section 5)
+                p1 = (tup[0], tup[1], tup[4])
+                p2 = (tup[2], tup[3], tup[5])
+            else:
+                p1 = (tup[0], tup[1], tup[2])
+                p2 = (tup[3], tup[4], tup[5])
             panel_extra.append(list(tup[6:]))
             subpaths[-1].extend((p1, p2))
             points.extend((p1, p2))
@@ -529,7 +536,8 @@ def encode_flat(stroke: FlatStroke) -> bytes:
     for q in stroke.quads:
         if len(q) != 4:
             raise ValueError("flat stroke quads must be (cx, cy, ex, ey)")
-    for v in (stroke.width, *starts[0]):
+    for v in (stroke.width, *(c for st in starts for c in st), *(c for q in stroke.quads for c in q),
+              *(float(d) for d in stroke.dash)):
         if not math.isfinite(v):
             raise ValueError("flat stroke values must be finite")
     values: List[Any] = [

@@ -121,6 +121,7 @@ QUAD_TOLERANCE = 0.3  # canvas units; max deviation of a quadratic from its cubi
 QUAD_MAX_DEPTH = 4  # at most 2**4 quads per cubic segment
 DASH_LENGTH = 0.3  # canvas units; a single point becomes this long
 DEFAULT_PAGE_SIZE = (455.04, 588.45)  # GoodNotes "standard" paper, used for an empty document
+MAX_PAGE_SIDE_PT = 1e6  # a page side beyond this (14 km) is damage; canvas sizes are float32 fields
 FILL_PARENT_TOLERANCE = 2.0  # pt added to 2 % of the parent's size when matching a fill to its parent
 RTF_ALIGNMENT = {"center": "\\qc", "right": "\\qr"}  # paragraph alignment control words
 _SQRT3_36 = math.sqrt(3.0) / 36.0
@@ -604,7 +605,7 @@ def _page_content(ctx: _Context, out: _PageOut) -> bytes:
     for image in page.images:
         try:
             records += _image_records(ctx, image, sx, sy)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, OverflowError) as exc:  # OverflowError: beyond float32
             ctx.warn(f"Page {out.index + 1}: an image was skipped ({exc}).")
     draw_index = 0
     previous: Optional[Tuple[Stroke, str]] = None  # the last ink stroke written and its UUID
@@ -636,7 +637,7 @@ def _page_content(ctx: _Context, out: _PageOut) -> bytes:
         draw_index += 1
         try:
             element, stroke_records = _stroke_records(ctx, stroke, sx, sy, draw_index)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, OverflowError) as exc:  # OverflowError: beyond float32
             ctx.warn(f"Page {out.index + 1}: a stroke was skipped ({exc}).")
             previous = None
             continue
@@ -654,7 +655,7 @@ def _page_content(ctx: _Context, out: _PageOut) -> bytes:
     for box in page.texts:
         try:
             records += _text_records(ctx, box, sx, sy)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, OverflowError) as exc:  # OverflowError: beyond float32
             ctx.warn(f"Page {out.index + 1}: a text box was skipped ({exc}).")
     return pb.encode_records(records)
 
@@ -669,8 +670,8 @@ def _paper_name(template_uuid: str, width: float, height: float) -> str:
 
 
 def _generated_template(ctx: _Context, page: Page, index: int) -> _Template:
-    width = float(page.width) if page.width and page.width > 0 else DEFAULT_PAGE_SIZE[0]
-    height = float(page.height) if page.height and page.height > 0 else DEFAULT_PAGE_SIZE[1]
+    width = float(page.width) if page.width and 0 < page.width <= MAX_PAGE_SIDE_PT else DEFAULT_PAGE_SIZE[0]
+    height = float(page.height) if page.height and 0 < page.height <= MAX_PAGE_SIDE_PT else DEFAULT_PAGE_SIZE[1]
     if (width, height) != (page.width, page.height):
         ctx.warn(f"Page {index + 1} has no valid size; the GoodNotes standard page size was used.")
     style = page.paper or "plain"
@@ -702,7 +703,7 @@ def _pdf_template(ctx: _Context, page: Page, index: int) -> Optional[_Template]:
     if bg.pdf_id not in ctx.pdf_infos:
         try:
             info: Optional[pdfutil.PdfInfo] = pdfutil.pdf_info(data)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, OverflowError) as exc:  # OverflowError: beyond float32
             info = None
             ctx.warn(f"PDF {bg.pdf_id!r} could not be read ({exc}); paper was generated instead.")
         if info is not None:

@@ -60,6 +60,7 @@ Only the standard library is used.
 """
 from __future__ import annotations
 
+import dataclasses
 import io
 import math
 import statistics
@@ -74,6 +75,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .. import geometry
 from ..model import Document, Image, Page, Point, Stroke, TextBox
+from . import x_inset
 from .archivebuilder import (
     INT64_MAX, ArchiveBuilder, color_string, point_string, range_string, rect_string, size_string,
 )
@@ -113,8 +115,13 @@ class _Slot:
     y_offset: float  # document y of the page's content origin (slot start + top gap)
     height: float  # slot height occupied in the document
     scale: float
-    x_offset: float = 0.0
+    x_offset: float = 0.0  # extra document x shift (centring of a scaled-down plain page)
     pdf_key: Optional[str] = None  # key into the PDF file table
+    x0: float = 0.0  # document x of the paper's left edge (``x_inset(W)``, negative)
+
+    def doc_x(self, x_pt: float) -> float:
+        """Document x of page coordinate ``x_pt`` (pt)."""
+        return self.x0 + self.x_offset + x_pt * self.scale
     pdf_page: int = 1  # 1-based page inside the PDF
 
 
@@ -195,6 +202,7 @@ def _layout(doc: Document, options: Any, width: float) -> Tuple[List[_Slot], Dic
                 x_off = (width - page_w * scale) / 2.0
                 doc.warn("Pages taller than Notability's plain page were scaled down to fit (use paper=\"pdf\" to keep the size)")
             slot = _Slot(page, "plain", y, plain_h, scale, x_offset=x_off)
+        slot.x0 = x_inset(width)
         slots.append(slot)
         y += slot.height
     return slots, pdf_files
@@ -213,7 +221,7 @@ def _curve_geometry(stroke: Stroke, slot: _Slot, tolerance: float, doc: Document
     s = slot.scale
 
     def to_doc(p: Point) -> Point:
-        return Point(slot.x_offset + p.x * s, slot.y_offset + p.y * s, max(0.0, p.width) * s)
+        return Point(slot.doc_x(p.x), slot.y_offset + p.y * s, max(0.0, p.width) * s)
 
     if x1 - x0 <= 1e-9 and y1 - y0 <= 1e-9:
         # Empty bbox: a dot, rendered as a tiny segment (0.5 pt dash in document units).
@@ -230,6 +238,29 @@ def _curve_geometry(stroke: Stroke, slot: _Slot, tolerance: float, doc: Document
         poly = geometry.simplify(poly, tolerance)
     anchors, controls = geometry.polyline_to_bezier([to_doc(p) for p in poly])
     return anchors, controls
+
+
+def _page_has_content(page: Page) -> bool:
+    return bool(page.strokes or page.images or page.texts)
+
+
+def _fractional_base(base: float, widths: Sequence[float]) -> float:
+    """``curveswidth`` for a stroke whose anchors have ``widths``.
+
+    The median keeps most fractions near 1, but Notability clips ``fractionalwidths`` to
+    ``[MIN_FRACTION, MAX_FRACTION]``; when a taper would be clipped (fountain-pen ends thinner
+    than a quarter of the median) the base is moved so the whole range fits, which is exact
+    as long as ``max / min <= MAX_FRACTION / MIN_FRACTION``.  The clip stays for wider ranges.
+    """
+    if not widths:
+        return base
+    lo, hi = min(widths), max(widths)
+    if lo >= base * MIN_FRACTION and hi <= base * MAX_FRACTION:
+        return base
+    if hi / lo <= MAX_FRACTION / MIN_FRACTION:
+        # the smallest base that keeps the range inside the clip, favouring fractions <= 1
+        return max(hi / MAX_FRACTION, min(base, lo / MIN_FRACTION))
+    return base
 
 
 def _build_ink(doc: Document, slots: Sequence[_Slot], options: Any) -> Dict[str, Any]:
@@ -261,6 +292,7 @@ def _build_ink(doc: Document, slots: Sequence[_Slot], options: Any) -> Dict[str,
             if base <= 1e-6:
                 base = max(float(stroke.width) * slot.scale, 0.3) if stroke.width and stroke.width > 0 else 0.3
             if pressure:
+                base = _fractional_base(base, [w for w in ws if w > 0])
                 frac = [min(MAX_FRACTION, max(MIN_FRACTION, (w / base) if w > 0 else 1.0)) for w in ws]
             else:
                 frac = [1.0] * len(ws)
@@ -525,7 +557,11 @@ class _SessionBuilder:
 
     def page_layout(self, slots: Sequence[_Slot], pdf_files: Dict[str, bytes]) -> Tuple[Any, Any]:
         b = self.b
-        if not any(s.kind == "pdf" for s in slots):
+        if not any(s.kind == "pdf" for s in slots) and (
+                len(slots) <= 1 or _page_has_content(slots[-1].page)):
+            # All-plain note whose page count follows from its content: the app writes no
+            # layout (the path proven on the iPad).  Trailing blank pages would be lost that
+            # way, so they get the blank entries the mixed case writes.
             return self.shared_empty(), self.shared_empty()
         file_uids: Dict[str, Any] = {}
         for key, _data in pdf_files.items():
@@ -604,7 +640,7 @@ class _SessionBuilder:
         if pixels is None:
             self.doc.warn("Image pixel size could not be read; crop rectangle uses the displayed size")
             pixels = (max(1, int(round(image.w * s))), max(1, int(round(image.h * s))))
-        origin = (slot.x_offset + image.x * s, slot.y_offset + image.y * s)
+        origin = (slot.doc_x(image.x), slot.y_offset + image.y * s)
         size = (max(image.w * s, 1.0), max(image.h * s, 1.0))
         transparent = b.uicolor(0, 0, 0, 0)
         image_obj = b.object("ImageObject", {
@@ -636,9 +672,20 @@ class _SessionBuilder:
         return b.object("ImageMediaObject", fields)
 
     def _font_name(self, run_font: Optional[str], bold: bool, italic: bool) -> str:
+        """PostScript name for a run: the font's own style suffix merged with the run's flags."""
         base = run_font or DEFAULT_FONT
         if "-" in base:
-            return base  # already a PostScript name with its style suffix
+            stem, suffix = base.rsplit("-", 1)
+            sl = suffix.lower()
+            has_bold, has_italic = "bold" in sl, ("italic" in sl or "oblique" in sl)
+            if has_bold or has_italic:
+                bold, italic = bold or has_bold, italic or has_italic
+                base = stem
+            elif not (bold or italic):
+                return base  # a weight name such as Helvetica-Light stays as it is
+            elif sl in ("regular", "roman", "book", "plain"):
+                base = stem  # AvenirNext-Regular + bold -> AvenirNext-Bold
+            # any other suffix (a weight): append the requested style, best effort
         if bold and italic:
             return base + "-BoldItalic"
         if bold:
@@ -649,13 +696,18 @@ class _SessionBuilder:
 
     def text_subranges(self, box: TextBox, scale: float) -> Tuple[str, List[Any]]:
         b = self.b
+        from ..model import TextRun
         text = box.text or ""
         runs = list(box.runs) if box.runs and "".join(r.text for r in box.runs) == text else []
         if not runs:
             if box.runs:
                 self.doc.warn("Text runs did not cover the text box content; formatting of one box was flattened")
-            from ..model import TextRun
             runs = [TextRun(text)]
+        clean = sanitise_text(text)
+        if clean != text:
+            self.doc.warn("Text containing unpaired surrogate characters was written with U+FFFD in their place")
+            text = clean
+            runs = [dataclasses.replace(r, text=sanitise_text(r.text)) for r in runs]
         subranges = []
         location = 0
         for run in runs:
@@ -691,7 +743,7 @@ class _SessionBuilder:
             self.shared_empty(), self.shared_empty(), self.shared_empty(),
             alignment=alignment,
         )
-        origin = (slot.x_offset + box.x * s - TEXT_PAD_X, slot.y_offset + box.y * s - TEXT_PAD_Y)
+        origin = (slot.doc_x(box.x) - TEXT_PAD_X, slot.y_offset + box.y * s - TEXT_PAD_Y)
         size = (max(box.w * s, 1.0) + 2 * TEXT_PAD_X, max(box.h * s, 1.0) + 2 * TEXT_PAD_Y)
         theta = math.radians(float(box.rotation or 0.0))
         if abs(theta) > 1e-9:
@@ -799,11 +851,26 @@ def _library_plist() -> bytes:
     )
 
 
+MAX_NAME_BYTES = 200  # bundle folder name; APFS / HFS+ allow 255 bytes, keep a margin for suffixes
+
+
 def _note_name(doc: Document, options: Any) -> str:
     title = _opt(options, "title", None) or doc.title or "Untitled"
-    title = unicodedata.normalize("NFC", str(title))
+    title = unicodedata.normalize("NFC", sanitise_text(str(title)))
     cleaned = "".join(c for c in title if c not in '/\\:' and (ord(c) >= 32)).strip(" .")
+    if len(cleaned.encode("utf-8")) > MAX_NAME_BYTES:
+        cleaned = cleaned.encode("utf-8")[:MAX_NAME_BYTES].decode("utf-8", "ignore").rstrip(" .")
+        doc.warn(f"Note title was shortened to {MAX_NAME_BYTES} bytes for the bundle folder name")
     return cleaned or "Untitled"
+
+
+def sanitise_text(text: str) -> str:
+    """Replace lone UTF-16 surrogates (unencodable in UTF-8 and UTF-16) with U+FFFD."""
+    try:
+        text.encode("utf-16-le")
+        return text
+    except UnicodeEncodeError:
+        return "".join("\ufffd" if 0xD800 <= ord(c) <= 0xDFFF else c for c in text)
 
 
 # ---------------------------------------------------------------------------------------

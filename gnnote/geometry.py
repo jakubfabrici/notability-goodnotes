@@ -7,6 +7,7 @@ from typing import List, Sequence, Tuple
 from .model import Point
 
 XY = Tuple[float, float]
+MAX_FLATTEN_STEPS = 4096  # per Bezier segment; a 1000 pt segment at 2 pt spacing needs 500
 
 
 def _lerp(a: float, b: float, t: float) -> float:
@@ -53,7 +54,14 @@ def simplify(points: Sequence[Point], tolerance: float) -> List[Point]:
 
 
 def polyline_to_bezier(points: Sequence[Point]) -> Tuple[List[Point], List[Tuple[Point, Point]]]:
-    """Catmull-Rom fit: anchors pass through every input point.
+    """Chord-length Catmull-Rom fit: anchors pass through every input point.
+
+    The tangent at an anchor is the chord ``p2 - p0`` of its neighbours, scaled by the length
+    of the segment the handle belongs to relative to the two adjacent segments (so a short
+    segment after a long one gets a short handle instead of the hook or loop a uniform
+    Catmull-Rom produces), and every handle is clamped to a third of its segment's chord.
+    For evenly spaced points this is the classic ``(p2 - p0) / 6`` handle; the first and last
+    handles lie on the chord, so a two-point stroke is an exact straight line.
 
     Returns ``(anchors, controls)`` with ``len(controls) == len(anchors) - 1``.
     A single point becomes a tiny two-anchor segment so the result is drawable.
@@ -64,14 +72,39 @@ def polyline_to_bezier(points: Sequence[Point]) -> Tuple[List[Point], List[Tuple
         pts = [p, Point(p.x + 0.5, p.y + 0.5, p.width)]
     controls: List[Tuple[Point, Point]] = []
     n = len(pts)
+    seg = [math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y) for i in range(n - 1)]
     for i in range(n - 1):
-        p0 = pts[i - 1] if i > 0 else pts[i]
         p1, p2 = pts[i], pts[i + 1]
-        p3 = pts[i + 2] if i + 2 < n else pts[i + 1]
-        c1 = Point(p1.x + (p2.x - p0.x) / 6.0, p1.y + (p2.y - p0.y) / 6.0, p1.width)
-        c2 = Point(p2.x - (p3.x - p1.x) / 6.0, p2.y - (p3.y - p1.y) / 6.0, p2.width)
+        d1 = seg[i]
+        limit = d1 / 3.0
+        # handle at p1 (tangent from p0 to p2)
+        if i > 0 and seg[i - 1] + d1 > 0:
+            p0 = pts[i - 1]
+            k = d1 / (3.0 * (seg[i - 1] + d1))
+            hx, hy = (p2.x - p0.x) * k, (p2.y - p0.y) * k
+        else:
+            hx, hy = (p2.x - p1.x) / 3.0, (p2.y - p1.y) / 3.0
+        hx, hy = _clamp_handle(hx, hy, limit)
+        c1 = Point(p1.x + hx, p1.y + hy, p1.width)
+        # handle at p2 (tangent from p1 to p3)
+        if i + 2 < n and d1 + seg[i + 1] > 0:
+            p3 = pts[i + 2]
+            k = d1 / (3.0 * (d1 + seg[i + 1]))
+            hx, hy = (p3.x - p1.x) * k, (p3.y - p1.y) * k
+        else:
+            hx, hy = (p2.x - p1.x) / 3.0, (p2.y - p1.y) / 3.0
+        hx, hy = _clamp_handle(hx, hy, limit)
+        c2 = Point(p2.x - hx, p2.y - hy, p2.width)
         controls.append((c1, c2))
     return pts, controls
+
+
+def _clamp_handle(hx: float, hy: float, limit: float) -> XY:
+    length = math.hypot(hx, hy)
+    if length > limit and length > 0:
+        f = limit / length
+        return hx * f, hy * f
+    return hx, hy
 
 
 def _cubic(p0: XY, c1: XY, c2: XY, p1: XY, t: float) -> XY:
@@ -85,7 +118,8 @@ def flatten_bezier(anchors: Sequence[Point], controls: Sequence[Tuple[Point, Poi
                    max_segment: float = 2.0) -> List[Point]:
     """Sample a Bezier chain into a polyline with roughly ``max_segment`` pt spacing.
 
-    Widths are interpolated linearly between anchors.
+    Widths are interpolated linearly between anchors.  A segment is never split into more
+    than ``MAX_FLATTEN_STEPS`` samples.
     """
     if len(anchors) == 1 or not controls:
         return [Point(p.x, p.y, p.width) for p in anchors]
@@ -94,7 +128,7 @@ def flatten_bezier(anchors: Sequence[Point], controls: Sequence[Tuple[Point, Poi
         p0, p1 = anchors[i], anchors[i + 1]
         chord = (math.hypot(c1.x - p0.x, c1.y - p0.y) + math.hypot(c2.x - c1.x, c2.y - c1.y)
                  + math.hypot(p1.x - c2.x, p1.y - c2.y))
-        steps = max(1, min(64, int(math.ceil(chord / max_segment))))
+        steps = max(1, min(MAX_FLATTEN_STEPS, int(math.ceil(chord / max_segment))))
         for s in range(1, steps + 1):
             t = s / steps
             x, y = _cubic((p0.x, p0.y), (c1.x, c1.y), (c2.x, c2.y), (p1.x, p1.y), t)

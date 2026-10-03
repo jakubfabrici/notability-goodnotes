@@ -206,7 +206,7 @@ def test_health(running: Tuple[str, int]) -> None:
     status, headers, body = _request(running, "GET", "/api/health")
     assert status == 200
     assert headers["Content-Type"].startswith("application/json")
-    assert json.loads(body) == {"ok": True, "version": __version__}
+    assert json.loads(body) == {"ok": True, "version": __version__, "maxUpload": srv.MAX_UPLOAD}
 
 
 def test_static_index_and_mime(running: Tuple[str, int]) -> None:

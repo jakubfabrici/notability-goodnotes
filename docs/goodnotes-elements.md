@@ -12,7 +12,7 @@ documents (`Test5.pdf`, `Test4.pdf` = GoodNotes PDF exports; `ex1.jpg`, `ex3.jpg
 confidence level. Where parser-for-goodnotes documents a structure that is **absent from the corpus** (sticky
 notes, "Type 31/35" shapes, LZ4 text payloads, image crop/rotation) it is reported as such, with low confidence.
 
-Evidence base (paths relative to `scratchpad/ref/`):
+Evidence base (paths relative to `scratchpad/ref/`, the session's clones of the reference repositories pinned in `tests/conftest.py`; the `scratchpad/work/*.py` scripts named below are not committed):
 
 | file | pages | what it contributes here |
 |---|---|---|

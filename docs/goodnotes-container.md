@@ -19,7 +19,8 @@ the files):
 
 Tools used: `goodnotes_re.wire` (parser-for-goodnotes) and `goodparse.protobuf` as schema-free
 wire decoders, plus small census scripts kept in the session scratchpad
-(`scratchpad/work/dump.py`, `events_schema.py`, `notes_census.py`, `build_min.py`).
+(`scratchpad/work/dump.py`, `events_schema.py`, `notes_census.py`, `build_min.py`; these are
+not committed — the repository's `gnnote/` codecs and `tests/` reproduce their findings).
 
 Notation: `#n` = protobuf field number n. Wire types: `varint`, `fixed32` (float32 LE unless
 said otherwise), `fixed64` (float64 LE), `LEN` (length-delimited: UTF-8 string, raw bytes or a

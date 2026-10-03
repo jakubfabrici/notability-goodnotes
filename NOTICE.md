@@ -4,8 +4,20 @@ gnnote is released under the MIT License (see `LICENSE`). It is a clean-room
 implementation written from the byte-level research notes in `docs/`.
 
 * Parts of the GoodNotes container synthesis (event ordering and record shapes) are
-  adapted from **inkterop** by cable729 (https://github.com/cable729/inkterop), MIT License,
-  Copyright (c) the inkterop authors. Used with attribution as required by that licence.
+  adapted from **inkterop** (https://github.com/cable729/inkterop), MIT License,
+  Copyright (c) 2026 Caleb (cable729). The MIT permission notice of inkterop applies to the
+  adapted parts; it is reproduced here as that licence requires: "Permission is hereby
+  granted, free of charge, to any person obtaining a copy of this software and associated
+  documentation files (the "Software"), to deal in the Software without restriction,
+  including without limitation the rights to use, copy, modify, merge, publish, distribute,
+  sublicense, and/or sell copies of the Software, and to permit persons to whom the Software
+  is furnished to do so, subject to the following conditions: The above copyright notice and
+  this permission notice shall be included in all copies or substantial portions of the
+  Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND."
+* `gnnote/applelz4.py` shares its module name and the names of its public helpers with the
+  corresponding module of goodparse (the names follow Apple's `libcompression` terminology);
+  its implementation was written from `docs/ecosystem.md` section 3 and the LZ4 block format
+  description, not from goodparse.
 * **goodparse** (https://github.com/franzthiemann/goodparse, GPL-3.0) and
   **parser-for-goodnotes** (https://github.com/Kaih1825/parser-for-goodnotes, MIT) are used
   **only as test oracles**: the test suite runs them in a separate process, in their own

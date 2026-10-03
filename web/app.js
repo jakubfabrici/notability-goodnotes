@@ -41,6 +41,7 @@ const el = {
   stats: $("stats").querySelector("tbody"),
   warnings: $("warnings"),
   warningsNone: $("warnings-none"),
+  warningsLang: $("warnings-lang"),
   error: $("error"),
   errorMessage: $("error-message"),
   errorHelp: $("error-help"),
@@ -58,6 +59,8 @@ const state = {
   workerReady: null,    // Promise resolved when the worker posted "ready"
   workerProgress: null, // last engine progress {loaded,total}
   busy: false,
+  maxUpload: 0,         // server engine: largest accepted upload in bytes (from api/health)
+  versionInfo: null,    // version.json of the build, when it exists
   last: null,           // last result {file, name, stats, warnings, ...}
   lastUrl: null,        // object URL of the last result
   seq: 0,
@@ -140,6 +143,13 @@ function readOptions() {
 
 function updateConvertButton() {
   el.convert.disabled = !state.file || state.busy || state.engine === "failed";
+  // While a conversion runs the selected file must not change: its result would be shown
+  // under another file's name (or with no file selected at all).
+  el.reset.disabled = state.busy;
+  el.choose.disabled = state.busy;
+  el.file.disabled = state.busy;
+  el.dropzone.classList.toggle("busy", state.busy);
+  el.dropzone.setAttribute("aria-disabled", state.busy ? "true" : "false");
 }
 
 // ---------- language ----------
@@ -169,6 +179,7 @@ function describeFile(file) {
 }
 
 function acceptFile(file) {
+  if (state.busy) return;
   hideError();
   show(el.result, false);
   state.last = null;
@@ -193,6 +204,7 @@ el.file.addEventListener("change", () => acceptFile(el.file.files && el.file.fil
 
 function openPicker(ev) {
   if (ev) ev.preventDefault();
+  if (state.busy) return;
   el.file.click();
 }
 el.choose.addEventListener("click", (ev) => {
@@ -228,6 +240,7 @@ window.addEventListener("dragover", (ev) => ev.preventDefault());
 window.addEventListener("drop", (ev) => ev.preventDefault());
 
 el.reset.addEventListener("click", () => {
+  if (state.busy) return;
   state.file = null;
   state.last = null;
   el.file.value = "";
@@ -244,18 +257,34 @@ el.reset.addEventListener("click", () => {
 
 // ---------- engine detection ----------
 
+function pyodideCdn() {
+  const info = state.versionInfo;
+  if (info && info.pyodide && typeof info.pyodide.cdn === "string" && info.pyodide.cdn) {
+    return info.pyodide.cdn;
+  }
+  return PYODIDE_CDN;
+}
+
 async function detectPyodideBase() {
   if (typeof window.PYODIDE_BASE === "string" && window.PYODIDE_BASE) {
     return new URL(window.PYODIDE_BASE, location.href).href;
   }
+  const local = new URL("pyodide/", location.href).href;
+  const info = state.versionInfo || (await loadVersion());
+  if (info && info.pyodide && info.pyodide.vendored === true) {
+    return local; // scripts/build_web.py --vendor-pyodide wrote the copy next to the page
+  }
   try {
     const probe = new URL("pyodide/pyodide.mjs", location.href).href;
     const r = await fetch(probe, { method: "HEAD", cache: "no-cache" });
-    if (r.ok) return new URL("pyodide/", location.href).href;
+    // A static host with a SPA fallback answers 200 + index.html for every unknown path;
+    // only a non-HTML answer counts as a vendored copy.
+    const ctype = (r.headers.get("content-type") || "").toLowerCase();
+    if (r.ok && !ctype.startsWith("text/html")) return local;
   } catch (e) {
     /* no vendored copy */
   }
-  return PYODIDE_CDN;
+  return pyodideCdn();
 }
 
 function startWorker() {
@@ -302,7 +331,8 @@ function startWorker() {
   });
   detectPyodideBase().then((base) => {
     const packageUrl = new URL("gnnote.zip", location.href).href;
-    worker.postMessage({ type: "init", pyodideBase: base, packageUrl: packageUrl });
+    // pyodideCdn is the fallback the worker retries with when the vendored copy fails to load
+    worker.postMessage({ type: "init", pyodideBase: base, pyodideCdn: pyodideCdn(), packageUrl: packageUrl });
   });
   return state.workerReady;
 }
@@ -334,6 +364,7 @@ async function detectEngine() {
       const j = await r.json().catch(() => null);
       if (j && j.ok === true) {
         state.engine = "server";
+        state.maxUpload = typeof j.maxUpload === "number" && j.maxUpload > 0 ? j.maxUpload : 0;
         setEngineStatus();
         updateConvertButton();
         return;
@@ -354,6 +385,11 @@ async function detectEngine() {
 // ---------- conversion ----------
 
 async function convertViaServer(file, options) {
+  if (state.maxUpload && file.size > state.maxUpload) {
+    // The server answers 413 and closes the socket before the body is read, which the
+    // browser reports as a network error: refuse here with a readable message instead.
+    throw new Error(t("error.toolarge", { size: formatBytes(file.size), limit: formatBytes(state.maxUpload) }));
+  }
   setProgress(t("progress.uploading"));
   const q = new URLSearchParams({
     paper: options.paper,
@@ -498,6 +534,7 @@ function renderResult(res) {
     el.warnings.appendChild(li);
   }
   show(el.warningsNone, res.warnings.length === 0);
+  show(el.warningsLang, res.warnings.length > 0 && currentLang() !== "en");
 
   // share button only when the platform can share files
   let canShare = false;
@@ -532,6 +569,7 @@ async function runConversion() {
     const res = state.engine === "server"
       ? await convertViaServer(file, options)
       : await convertViaWorker(file, options);
+    if (state.file !== file) return; // the file was reset or replaced meanwhile
     res.file = new File([res.blob], res.name, { type: res.blob.type });
     if (state.lastUrl) URL.revokeObjectURL(state.lastUrl);
     state.lastUrl = URL.createObjectURL(res.file);
@@ -562,20 +600,29 @@ el.convert.addEventListener("click", runConversion);
 
 // ---------- boot ----------
 
-async function loadVersion() {
-  try {
-    const r = await fetch(new URL("version.json", location.href).href, { cache: "no-cache" });
-    if (r.ok) {
-      const j = await r.json();
-      if (j && j.version) el.version.textContent = t("footer.version", { version: j.version });
-    }
-  } catch (e) {
-    /* development checkout without dist/ */
+let versionPromise = null;
+
+function loadVersion() {
+  if (!versionPromise) {
+    versionPromise = (async () => {
+      try {
+        const r = await fetch(new URL("version.json", location.href).href, { cache: "no-cache" });
+        if (r.ok) {
+          const j = await r.json();
+          if (j && typeof j === "object") state.versionInfo = j;
+          if (j && j.version) el.version.textContent = t("footer.version", { version: j.version });
+        }
+      } catch (e) {
+        /* development checkout without dist/ */
+      }
+      return state.versionInfo;
+    })();
   }
+  return versionPromise;
 }
 
 applyLanguage(initialLang());
 setEngineStatus();
 updateConvertButton();
-detectEngine();
 loadVersion();
+detectEngine();

@@ -26,14 +26,14 @@
 
     <!-- 1. file -->
     <section class="card" id="step-file">
-      <div id="dropzone" class="dropzone" tabindex="0" role="button">
-        <input id="file" type="file" accept=".goodnotes,.note" class="visually-hidden">
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-labelledby="drop-label">
+        <input id="file" type="file" accept=".goodnotes,.note" class="visually-hidden" data-i18n-aria="drop.label">
         <span class="drop-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>
           </svg>
         </span>
-        <span class="drop-label" data-i18n="drop.label"></span>
+        <span id="drop-label" class="drop-label" data-i18n="drop.label"></span>
         <span class="drop-hint" data-i18n="drop.hint"></span>
         <button id="choose" type="button" class="btn btn-secondary" data-i18n="drop.choose"></button>
       </div>
@@ -114,6 +114,7 @@
       <h3 data-i18n="result.stats"></h3>
       <table class="stats" id="stats"><tbody></tbody></table>
       <h3 data-i18n="result.warnings"></h3>
+      <p id="warnings-lang" class="help muted" data-i18n="result.warnings.lang" hidden></p>
       <ul id="warnings" class="warnings"></ul>
       <p id="warnings-none" class="help muted" data-i18n="result.warnings.none" hidden></p>
     </section>

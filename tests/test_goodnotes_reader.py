@@ -7,6 +7,8 @@ and ``gnnote.tpl``.  GoodNotes' own PDF export of Test5 is compared with PyMuPDF
 """
 from __future__ import annotations
 
+import math
+
 import io
 import json
 import os
@@ -243,11 +245,10 @@ def test_all_samples_read_without_exception(samples):
                     assert s.width > 0 and all(p.width > 0 for p in s.points)
                 if s.controls is not None:
                     assert len(s.controls) == len(s.points) - 1
-                # the stroke starts inside its page (5 % tolerance); later points may stray in
-                # the legacy ribbon strokes of ex2
-                x, y = _first(s.points)
-                assert -0.05 * page.width <= x <= 1.05 * page.width, (path.name, x)
-                assert -0.05 * page.height <= y <= 1.05 * page.height, (path.name, y)
+                # every point lies inside its page (5 % tolerance)
+                for p in s.points:
+                    assert -0.05 * page.width <= p.x <= 1.05 * page.width, (path.name, p.x)
+                    assert -0.05 * page.height <= p.y <= 1.05 * page.height, (path.name, p.y)
                 assert all(0.0 <= c <= 1.0 for c in s.color)
             for im in page.images:
                 assert im.fmt in ("png", "jpeg", "pdf") and im.data
@@ -856,3 +857,25 @@ def test_builtin_template_name_pattern():
     assert BUILTIN_TEMPLATE_RE.match("9FE8F365-4BEE-5057-8573-1A56C77CAC19_a4_1_2 - White")
     assert not BUILTIN_TEMPLATE_RE.match("user.pdf")
     assert not BUILTIN_TEMPLATE_RE.match("lecture notes - Blue")
+
+
+def test_ex2_width_word_ribbon_panels(samples):
+    """The one ribbon stroke with a leading width word (ex2, tool 4) stores its panels as
+    (x1, y1, x2, y2, r1, r2); read as (x, y, r, x, y, r) it became nine page-spanning strokes
+    with widths up to 300 pt."""
+    page = _read(samples.repo("parser-for-goodnotes") / "assets" / "ex2.goodnotes").pages[0]
+    assert len(page.strokes) == 28
+    fountain = [s for s in page.strokes if s.pen == "fountain"]
+    assert len(fountain) >= 10
+    for s in fountain:
+        x0, y0, x1, y1 = s.bbox()
+        assert max(x1 - x0, y1 - y0) < 0.7 * page.width, (x0, y0, x1, y1)
+        assert max(p.width for p in s.points) < 20.0
+        jumps = [math.hypot(b.x - a.x, b.y - a.y) for a, b in zip(s.points, s.points[1:])]
+        assert max(jumps) < 60.0, max(jumps)
+    # the erased sub-paths of that stroke are short three-point pieces near the bottom left
+    pieces = [s for s in fountain if len(s.points) == 3]
+    assert len(pieces) == 8
+    for s in pieces:
+        x0, y0, x1, y1 = s.bbox()
+        assert math.hypot(x1 - x0, y1 - y0) < 20.0 and y0 > 0.9 * page.height

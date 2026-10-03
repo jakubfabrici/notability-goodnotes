@@ -423,13 +423,22 @@ def _parse_object_sequence(lexer: _Lexer, stop: Sequence[str]) -> Tuple[List[Any
 # ----------------------------------------------------------------------------------
 
 
+MAX_STREAM_BYTES = 128 * 1024 * 1024  # decoded size cap for one stream (xref / object streams are KB..MB)
+
+
 def _flate(data: bytes) -> bytes:
+    """Inflate a FlateDecode stream, never past :data:`MAX_STREAM_BYTES` (decompression bomb guard)."""
     start = 0
     while start < len(data) and data[start] in _WHITESPACE:
         start += 1
     data = data[start:]
+    d = zlib.decompressobj()
     try:
-        return zlib.decompress(data)
+        out = d.decompress(data, MAX_STREAM_BYTES)
+        if d.unconsumed_tail:
+            raise PdfError(f"stream inflates to more than {MAX_STREAM_BYTES} bytes")
+        if d.eof:
+            return out
     except zlib.error:
         pass
     # damaged or truncated: salvage what can be inflated
@@ -438,7 +447,12 @@ def _flate(data: bytes) -> bytes:
         out = bytearray()
         try:
             for i in range(0, len(data), 4096):
-                out += d.decompress(data[i : i + 4096])
+                remaining = MAX_STREAM_BYTES - len(out)
+                if remaining <= 0:
+                    raise PdfError(f"stream inflates to more than {MAX_STREAM_BYTES} bytes")
+                out += d.decompress(data[i : i + 4096], remaining)
+                if d.unconsumed_tail:
+                    raise PdfError(f"stream inflates to more than {MAX_STREAM_BYTES} bytes")
         except zlib.error:
             pass
         if out:
@@ -485,6 +499,8 @@ def _lzw(data: bytes, early: int = 1) -> bytes:
             else:
                 return bytes(out)
             out += entry
+            if len(out) > MAX_STREAM_BYTES:
+                raise PdfError(f"stream decodes to more than {MAX_STREAM_BYTES} bytes")
             prev = entry
             # code width grows when the next code to assign (+1 with /EarlyChange 1)
             # reaches the current range
@@ -532,6 +548,8 @@ def _run_length(data: bytes) -> bytes:
             if i < n:
                 out += bytes([data[i]]) * (257 - length)
             i += 1
+        if len(out) > MAX_STREAM_BYTES:
+            raise PdfError(f"stream decodes to more than {MAX_STREAM_BYTES} bytes")
     return bytes(out)
 
 

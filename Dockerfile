@@ -3,7 +3,7 @@
 #   docker build -t gnnote .
 #   docker run --rm -p 8000:8000 gnnote
 #
-# The build downloads the Pyodide runtime (about 15 MB) into dist/pyodide so the
+# The build downloads the Pyodide runtime (about 13.5 MB) into dist/pyodide so the
 # container works without internet access afterwards.
 FROM python:3.12-slim
 

@@ -504,20 +504,30 @@ def test_shape_geometry_forms(samples):
            0.125 * s.points[0].y + 0.375 * c1.y + 0.375 * c2.y + 0.125 * s.points[1].y)
     assert mid == pytest.approx((434.17, 696.90), abs=0.05)
     # rec 209: a dot stored as two identical points (795.2, 1282.6)
-    dots = [s for s in page.strokes if len(s.points) == 2 and not s.is_bezier
+    dots = [s for s in page.strokes if len(s.points) == 2 and s.pen != "pencil"
             and (s.points[0].x, s.points[0].y) == (s.points[1].x, s.points[1].y)]
     assert len(dots) == 1
     assert (dots[0].points[0].x, dots[0].points[0].y) == pytest.approx((795.2 * scale, 1282.6 * scale), abs=0.05)
-    # rec 39: a closed 4-point polygon (triangle, first == last)
-    closed = [s for s in page.strokes if len(s.points) == 4 and not s.is_bezier
+    # rec 39: a closed 4-point polygon (triangle, first == last) with straight sides: its
+    # cubic handles sit at the thirds of every segment so no Bezier fit can bow them
+    closed = [s for s in page.strokes if len(s.points) == 4
               and (s.points[0].x, s.points[0].y) == (s.points[-1].x, s.points[-1].y)]
     assert len(closed) == 1
+    assert_straight_handles(closed[0])
     # Test7 p2 red triangle: 4 points closed, exported as (29.12, 213.97)-(197.99, 397.60) with W/2 = 2.73
     t7 = _read(samples, "Test7").pages[1]
     tri = [s for s in t7.strokes if s.kind != "fill" and len(s.points) == 4
            and (s.points[0].x, s.points[0].y) == (s.points[-1].x, s.points[-1].y)]
     assert len(tri) == 1
     assert tuple(round(v, 2) for v in tri[0].bbox()) == (29.12, 213.97, 197.99, 397.6)
+    assert_straight_handles(tri[0])
+
+
+def assert_straight_handles(s) -> None:
+    assert s.is_bezier and len(s.controls) == len(s.points) - 1
+    for (p, q), (c1, c2) in zip(zip(s.points, s.points[1:]), s.controls):
+        assert (c1.x, c1.y) == pytest.approx((p.x + (q.x - p.x) / 3, p.y + (q.y - p.y) / 3), abs=1e-6)
+        assert (c2.x, c2.y) == pytest.approx((p.x + 2 * (q.x - p.x) / 3, p.y + 2 * (q.y - p.y) / 3), abs=1e-6)
 
 
 def test_stroke_widths_and_counts(samples):

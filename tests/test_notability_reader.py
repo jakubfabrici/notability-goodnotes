@@ -20,8 +20,9 @@ import pytest
 
 from gnnote.model import Document
 from gnnote.notability import keyedarchive as ka
+from gnnote.notability import x_inset
 from gnnote.notability.reader import (
-    LEGACY_ASPECT, PLAIN_PAGE_HEIGHT_PT, PLAIN_PAGE_WIDTH_PT, read_note,
+    LEGACY_ASPECT, PLAIN_PAGE_HEIGHT_PT, PLAIN_PAGE_WIDTH_PT, TEXT_PAD_X, read_note,
 )
 
 UID = plistlib.UID
@@ -364,11 +365,12 @@ def test_synthetic_plain_note_strokes_scale_and_pages():
     assert len(doc.pages) == 3
     assert all((p.width, p.height) == (PLAIN_PAGE_WIDTH_PT, PLAIN_PAGE_HEIGHT_PT) for p in doc.pages)
     scale = PLAIN_PAGE_WIDTH_PT / W
+    inset = -x_inset(W)  # the paper's left edge sits at document x = -W * 20 / 768
     s0 = doc.pages[0].strokes[0]
     assert s0.is_bezier and len(s0.controls) == 1 and len(s0.points) == 2
-    assert s0.points[0].x == pytest.approx(10 * scale) and s0.points[0].y == pytest.approx(20 * scale)
-    assert s0.points[1].x == pytest.approx(16 * scale)
-    assert s0.controls[0][0].x == pytest.approx(12 * scale) and s0.controls[0][1].y == pytest.approx(24 * scale)
+    assert s0.points[0].x == pytest.approx((10 + inset) * scale) and s0.points[0].y == pytest.approx(20 * scale)
+    assert s0.points[1].x == pytest.approx((16 + inset) * scale)
+    assert s0.controls[0][0].x == pytest.approx((12 + inset) * scale) and s0.controls[0][1].y == pytest.approx(24 * scale)
     assert s0.width == pytest.approx(2.0 * scale)
     assert s0.points[0].width == pytest.approx(1.0 * scale) and s0.points[1].width == pytest.approx(3.0 * scale)
     assert s0.color == pytest.approx((237 / 255, 54 / 255, 36 / 255, 1.0))
@@ -456,7 +458,7 @@ def test_synthetic_group_transform_and_pencil():
     grouped = strokes[1]
     scale = PLAIN_PAGE_WIDTH_PT / 565.0
     assert grouped.pen == "pencil"
-    assert grouped.points[0].x == pytest.approx((0.5 * 10 + 100) * scale)
+    assert grouped.points[0].x == pytest.approx((0.5 * 10 + 100 - x_inset(565.0)) * scale)
     assert grouped.points[1].y == pytest.approx((0.5 * 13 + 200) * scale)
     assert grouped.width == pytest.approx(2.0 * 0.5 * scale)
     assert any("shape" in w for w in doc.warnings)
@@ -625,7 +627,7 @@ def test_image_insert_note(samples):
     assert all(img.fmt == "jpeg" and img.data[:3] == b"\xff\xd8\xff" for _, img in images)
     scale = 612.0 / 565.0
     first = doc.pages[0].images[0]
-    assert first.x == pytest.approx(45.979817879621493 * scale)
+    assert first.x == pytest.approx((45.979817879621493 - x_inset(565.0)) * scale)
     assert first.y == pytest.approx(54.807942912508835 * scale)
     assert first.w == pytest.approx(250 * scale) and first.h == pytest.approx(166.66666666666666 * scale)
     assert first.rotation == 0.0
@@ -660,7 +662,8 @@ def test_text_note(samples):
     papyrus = next(r for r in styled.runs if r.text == "Papyrus")
     assert papyrus.font == "Papyrus"
     assert styled.size == pytest.approx(12 * 612.0 / 565.0)
-    assert styled.x == pytest.approx(63.9672737411572 * 612.0 / 565.0)
+    # box origin + the (5, 2) text padding, measured from the paper's left edge
+    assert styled.x == pytest.approx((63.9672737411572 + TEXT_PAD_X - x_inset(565.0)) * 612.0 / 565.0)
     # the all-newline flow text of this note must not become a text box
     assert not any("Typed page text" in w for w in doc.warnings)
     # the title dot drawn above page 1 stays on page 1 (y slightly negative, not clipped)
@@ -712,7 +715,7 @@ def test_template_note_widths_match_raw_arrays(samples):
         assert s.width == pytest.approx(widths[i] * scale)
         for j, pt in enumerate(s.points):
             assert pt.width == pytest.approx(widths[i] * fw[f + j] * scale)
-            assert pt.x == pytest.approx(pts[2 * (p + 3 * j)] * scale)
+            assert pt.x == pytest.approx((pts[2 * (p + 3 * j)] - x_inset(W)) * scale)
             assert pt.y == pytest.approx(pts[2 * (p + 3 * j) + 1] * scale)
         f += k + 1
         p += nums[i]
@@ -776,7 +779,7 @@ def test_page_assignment_matches_handwriting_index(samples, tmp_path_factory):
             # ink drawn above the page top (text.note's title dot) is kept on the page but
             # indexed under key '0' by Notability, so leave it out of the comparison
             on_page = [s for s in page.strokes if s.points[0].y >= 0] or page.strokes
-            min_x = min(p.x for s in on_page for p in s.points) / scale
+            min_x = min(p.x for s in on_page for p in s.points) / scale + x_inset(W)  # back to document x
             min_y = min(p.y for s in on_page for p in s.points) / scale
             if abs(ox - min_x) < 12 and abs(oy - min_y) < 12:
                 agree += 1
@@ -784,3 +787,23 @@ def test_page_assignment_matches_handwriting_index(samples, tmp_path_factory):
             compared += 1
             assert agree >= 0.8 * total, (name, agree, total)
     assert compared >= 5
+
+
+# --------------------------------------------------------------------------- hostile geometry
+
+
+def test_tiny_page_width_is_replaced_not_exploded():
+    """A sub-unit pageWidthInDocumentCoordsKey made every stroke land on an astronomically
+    distant page index (hundreds of millions of Page objects, or OverflowError for 5e-324)."""
+    from gnnote.notability.reader import DEFAULT_PAGE_WIDTH, MAX_PAGES
+    for width in (5e-324, 1e-6, 1e-4):
+        doc = read_note(_build_note(width=width, curves=[_curve([(10, 1000), (11, 1001), (12, 1002), (13, 1003)])]))
+        assert len(doc.pages) == 2  # y = 1000 is on page 2 of the default-width layout
+        assert any("not usable" in w and f"{DEFAULT_PAGE_WIDTH:g}" in w for w in doc.warnings)
+    # a huge, infinite or NaN coordinate is clamped to the last allowed page
+    for y in (1e38, float("inf")):  # float32 fields: 1e38 is the largest representable magnitude class
+        doc = read_note(_build_note(curves=[_curve([(10, y), (11, y), (12, y), (13, y)])]))
+        assert len(doc.pages) == MAX_PAGES and len(doc.pages[-1].strokes) == 1
+        assert any("beyond page" in w for w in doc.warnings)
+    doc = read_note(_build_note(curves=[_curve([(10, float("nan")), (11, 1), (12, 2), (13, 3)])]))
+    assert len(doc.pages) == 1

@@ -41,6 +41,8 @@ _MIN_MATCH = 4
 _MF_LIMIT = 12       # a match may not start closer than this to the end of the block
 _LAST_LITERALS = 5   # the last bytes of a block are always literals
 _MAX_OFFSET = 65535
+MAX_BLOCK_OUTPUT = 64 * 1024 * 1024  # cap for a block whose size is not declared
+MAX_STREAM_OUTPUT = 256 * 1024 * 1024  # summed declared sizes of a stream (largest real frame: 30 520 bytes)
 
 
 def is_apple_lz4(data: bytes) -> bool:
@@ -69,11 +71,16 @@ def lz4_block_decompress(src: bytes, out: "bytearray | None" = None,
                          expected_size: "int | None" = None) -> bytearray:
     """Decode one raw LZ4 block, appending to ``out`` (the history window) and returning it.
 
-    When ``expected_size`` is given the block must produce exactly that many new bytes.
+    When ``expected_size`` is given the block must produce exactly that many new bytes, and
+    the budget is enforced *before* every literal and match copy, so a block that lies about
+    its size cannot make the decoder materialise more than ``expected_size`` bytes (a match
+    of a few MB of length-extension bytes would otherwise expand ~255:1 into gigabytes).
+    Without ``expected_size`` the output is capped at :data:`MAX_BLOCK_OUTPUT`.
     """
     if out is None:
         out = bytearray()
     start_len = len(out)
+    budget = expected_size if expected_size is not None else MAX_BLOCK_OUTPUT
     pos = 0
     n = len(src)
     while pos < n:
@@ -84,6 +91,8 @@ def lz4_block_decompress(src: bytes, out: "bytearray | None" = None,
             lit_len, pos = _read_length(src, pos, lit_len)
         if pos + lit_len > n:
             raise ValueError("LZ4 block truncated inside literals")
+        if len(out) - start_len + lit_len > budget:
+            raise ValueError(f"LZ4 block decodes to more than {budget} bytes")
         out += src[pos:pos + lit_len]
         pos += lit_len
         if pos == n:
@@ -100,6 +109,8 @@ def lz4_block_decompress(src: bytes, out: "bytearray | None" = None,
         if match_len == 15:
             match_len, pos = _read_length(src, pos, match_len)
         match_len += _MIN_MATCH
+        if len(out) - start_len + match_len > budget:
+            raise ValueError(f"LZ4 block decodes to more than {budget} bytes")
         begin = len(out) - offset
         if offset >= match_len:
             out += out[begin:begin + match_len]
@@ -192,6 +203,8 @@ def decompress(data: bytes) -> bytes:
             pos += 8
             if pos + encoded_size > n:
                 raise ValueError("truncated bv41 block payload")
+            if len(out) + decoded_size > MAX_STREAM_OUTPUT:
+                raise ValueError(f"Apple LZ4 stream declares more than {MAX_STREAM_OUTPUT} bytes")
             lz4_block_decompress(data[pos:pos + encoded_size], out, decoded_size)
             pos += encoded_size
         elif magic == MAGIC_STORED:
@@ -201,6 +214,8 @@ def decompress(data: bytes) -> bytes:
             pos += 4
             if pos + size > n:
                 raise ValueError("truncated bv4- block payload")
+            if len(out) + size > MAX_STREAM_OUTPUT:
+                raise ValueError(f"Apple LZ4 stream declares more than {MAX_STREAM_OUTPUT} bytes")
             out += data[pos:pos + size]
             pos += size
         else:

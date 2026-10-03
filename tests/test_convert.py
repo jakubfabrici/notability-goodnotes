@@ -48,6 +48,7 @@ from gnnote.convert import (EXTENSIONS, GOODNOTES, NOTABILITY, ConvertResult, Op
 from gnnote.goodnotes.reader import read_goodnotes
 from gnnote.goodnotes.writer import write_goodnotes
 from gnnote.model import Document, Image, Page, PdfBackground, Point, Stroke, TextBox
+from gnnote.notability import x_inset
 from gnnote.notability.reader import PLAIN_PAGE_WIDTH_PT, read_note
 from gnnote.notability.writer import LEGACY_ASPECT, write_note
 
@@ -664,7 +665,9 @@ def test_poc_parity_test5_page_3(samples) -> None:
     all_curves, all_colors = _session_curves(out.data)
     ours = [(c, col) for c, col in zip(all_curves, all_colors)
             if y_offset <= c[0][1] < y_offset + LEGACY_ASPECT * width]
-    ours = [([(x, y - y_offset) for x, y in c], col) for c, col in ours]
+    # the PoC mapped the page's left edge to document x = 0; gnnote applies Notability's
+    # paper inset (design.md 4.2), so compare in the PoC's frame
+    ours = [([(x - x_inset(width), y - y_offset) for x, y in c], col) for c, col in ours]
     assert len(ours) == sum(e["k"] for e in elements) == len(page.strokes) == 48
     assert len(poc_curves) == 28
 

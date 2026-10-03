@@ -95,8 +95,25 @@ jobs:
       - name: Fetch sample files (synthetic fallback when the repositories are unreachable)
         run: |
           mkdir -p tests/.samples
-          git clone -q --depth 1 https://github.com/franzthiemann/goodparse tests/.samples/goodparse || true
-          git clone -q --depth 1 https://github.com/HuyNguyenAu/notability-to-svg tests/.samples/notability-to-svg || true
+          python - <<'EOF'
+          # the same pinned commits as the tests job (tests/conftest.py), so the e2e inputs
+          # are the files the unit tests were written against
+          import shutil, sys
+          from pathlib import Path
+          sys.path.insert(0, ".")
+          from tests.conftest import REPOS, clone_pinned
+          root = Path("tests/.samples")
+          for name in ("goodparse", "notability-to-svg"):
+              url, sha = REPOS[name]
+              target = root / name
+              if target.is_dir():
+                  continue
+              try:
+                  clone_pinned(target, url, sha)
+              except Exception as exc:  # noqa: BLE001
+                  shutil.rmtree(target, ignore_errors=True)
+                  print("skipped:", name, exc)
+          EOF
           python - <<'EOF'
           from pathlib import Path
           from gnnote.convert import Options

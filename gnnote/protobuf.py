@@ -137,8 +137,17 @@ def try_decode_message(data: bytes) -> Optional[List[Field]]:
         return None
 
 
-def decode_records(data: bytes) -> List[bytes]:
-    """Split a ``<varint L><L bytes>...`` record stream into its records."""
+MAX_RECORDS = 200_000  # a record stream with more entries is damaged (or a decompression bomb); the
+# largest real member in the corpus (ex1.goodnotes, 5620 strokes on one page) holds 5620 records
+
+
+def decode_records(data: bytes, max_records: int = MAX_RECORDS) -> List[bytes]:
+    """Split a ``<varint L><L bytes>...`` record stream into its records.
+
+    Raises ``ValueError`` when a record runs past the end or the stream holds more than
+    ``max_records`` entries (a run of zero bytes would otherwise become one empty record per
+    byte, so a highly compressible member could cost unbounded time and memory).
+    """
     records: List[bytes] = []
     pos = 0
     n = len(data)
@@ -147,6 +156,8 @@ def decode_records(data: bytes) -> List[bytes]:
         end = pos + length
         if end > n:
             raise ValueError(f"record of length {length} at offset {pos} runs past the end")
+        if len(records) >= max_records:
+            raise ValueError(f"record stream holds more than {max_records} records")
         records.append(bytes(data[pos:end]))
         pos = end
     return records

@@ -210,15 +210,42 @@ def multipart_boundary(content_type: Optional[str]) -> Optional[bytes]:
     return boundary.encode("ascii", "replace")
 
 
+def _find_delimiter(body: bytes, delim: bytes, start: int) -> Optional[Tuple[int, int]]:
+    """``(data_end, after)`` of the next real delimiter at or after ``start``.
+
+    RFC 2046: a delimiter is a line break, ``--boundary``, optional transport padding and a
+    line break (or ``--`` for the closing one).  ``--boundary`` followed by anything else is
+    payload and is skipped.  ``data_end`` excludes the line break before the delimiter.
+    """
+    pos = start
+    n = len(body)
+    while True:
+        i = body.find(delim, pos)
+        if i < 0:
+            return None
+        after = i + len(delim)
+        while after < n and body[after] in b" \t":
+            after += 1
+        tail = body[after:after + 2]
+        if tail == b"--" or tail == b"\r\n" or tail[:1] == b"\n":
+            end = i
+            if body[end - 2:end] == b"\r\n":
+                end -= 2
+            elif body[end - 1:end] == b"\n":
+                end -= 1
+            return max(end, start), after
+        pos = i + len(delim)
+
+
 def parse_multipart(body: bytes, boundary: bytes) -> List[Part]:
     """Parse a ``multipart/form-data`` body into its parts (byte-oriented, stdlib only)."""
     delim = b"--" + boundary
     parts: List[Part] = []
-    pos = body.find(delim)
-    if pos < 0:
+    found = _find_delimiter(body, delim, 0)
+    if found is None:
         raise MultipartError("multipart body does not start with the boundary")
+    _, pos = found
     while True:
-        pos += len(delim)
         if body[pos:pos + 2] == b"--":
             break
         if body[pos:pos + 2] == b"\r\n":
@@ -236,16 +263,11 @@ def parse_multipart(body: bytes, boundary: bytes) -> List[Part]:
             raise MultipartError("multipart part without a header block")
         header_text = body[pos:header_end].decode("utf-8", "replace")
         data_start = header_end + sep_len
-        nxt = body.find(b"\r\n" + delim, data_start)
-        if nxt < 0:
-            nxt = body.find(b"\n" + delim, data_start)
-            if nxt < 0:
-                raise MultipartError("unterminated multipart part")
-            data = body[data_start:nxt]
-            pos = nxt + 1
-        else:
-            data = body[data_start:nxt]
-            pos = nxt + 2
+        found = _find_delimiter(body, delim, data_start)
+        if found is None:
+            raise MultipartError("unterminated multipart part")
+        data_end, pos = found
+        data = body[data_start:data_end]
         name = ""
         filename: Optional[str] = None
         ctype: Optional[str] = None
@@ -341,6 +363,7 @@ class GnNoteHandler(BaseHTTPRequestHandler):
 
     server_version = f"gnnote/{__version__}"
     protocol_version = "HTTP/1.1"
+    timeout = 60  # seconds a request may stay idle: a half-sent upload must not hold a thread forever
 
     # ---- plumbing -------------------------------------------------------------
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - stdlib name
@@ -356,7 +379,7 @@ class GnNoteHandler(BaseHTTPRequestHandler):
         for key, value in (extra or {}).items():
             self.send_header(key, value)
         self.end_headers()
-        if not head_only:
+        if not head_only and self.command != "HEAD":  # RFC 9110: no body on HEAD, whichever branch answers
             self.wfile.write(body)
 
     def _send_json(self, status: int, payload: Dict[str, Any],
@@ -384,7 +407,7 @@ class GnNoteHandler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         path = unquote(url.path)
         if path == "/api/health":
-            self._send_json(HTTPStatus.OK, {"ok": True, "version": __version__},
+            self._send_json(HTTPStatus.OK, {"ok": True, "version": __version__, "maxUpload": MAX_UPLOAD},
                             {"Cache-Control": "no-store"})
             return
         if path.startswith("/api/"):

@@ -6,7 +6,7 @@
   --text: #16181d;
   --muted: #5d6470;
   --border: #d9dde5;
-  --accent: #3b6fd6;
+  --accent: #2f62c9; /* 4.6:1 on --bg for the ghost button and footer link text */
   --accent-text: #ffffff;
   --accent-soft: #e6eefb;
   --danger: #c0392b;
@@ -148,6 +148,7 @@ body {
 .drop-label { font-weight: 600; }
 .drop-hint { font-size: 13px; color: var(--muted); }
 .dropzone .btn { margin-top: 8px; }
+.dropzone.busy { cursor: default; opacity: 0.6; }
 
 .visually-hidden {
   position: absolute !important;

@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..model import Document, Image, Page, PdfBackground, Point, Stroke, TextBox, TextRun
+from . import x_inset
 from .keyedarchive import (
     Archive, color_from_uicolor, load_archive, parse_color_string, parse_point,
     parse_range, parse_rect,
@@ -58,6 +59,11 @@ LEGACY_ASPECT = 1.3125  # plain page height / width in document units (803.25 / 
 PLAIN_PAGE_WIDTH_PT = 612.0
 PLAIN_PAGE_HEIGHT_PT = PLAIN_PAGE_WIDTH_PT * LEGACY_ASPECT  # 803.25
 DEFAULT_PAGE_WIDTH = 565.0  # W used when the note never recorded one
+MIN_PAGE_WIDTH = 16.0  # a recorded width below this is damage (real notes use 256 .. 768)
+MAX_PAGES = 10_000  # content further down the document than this many pages is clamped
+TEXT_PAD_X, TEXT_PAD_Y = 5.0, 2.0  # text inset inside a Notability text box (doc units; writer adds it)
+MAX_MEMBER_BYTES = 256 * 1024 * 1024  # declared (decompressed) size above which a ZIP member is skipped
+MAX_TOTAL_BYTES = 1024 * 1024 * 1024  # decompressed bytes one bundle may hand out in total
 BLANK_PAGE_MARKERS = (0x7FFFFFFF, 0x7FFFFFFFFFFFFFFF)
 FLOW_TEXT_MARGIN_PT = 36.0
 
@@ -85,6 +91,7 @@ class _Curve:
 @dataclass
 class _Slot:
     y0: float  # document units
+    x0: float  # document x of the paper's left edge (``x_inset(W)``, negative)
     height: float  # document units occupied
     width_pt: float
     height_pt: float
@@ -105,21 +112,30 @@ class _Layout:
         scale = PLAIN_PAGE_WIDTH_PT / self.width
         if self.template is not None:
             pdf_id, w, h = self.template
-            return _Slot(y0, self.plain_height, w, h, w / self.width,
+            return _Slot(y0, x_inset(self.width), self.plain_height, w, h, w / self.width,
                          background=PdfBackground(pdf_id, 0), builtin=True)
-        return _Slot(y0, self.plain_height, PLAIN_PAGE_WIDTH_PT, self.plain_height * scale, scale)
+        return _Slot(y0, x_inset(self.width), self.plain_height, PLAIN_PAGE_WIDTH_PT,
+                     self.plain_height * scale, scale)
 
     def end(self) -> float:
         return self.slots[-1].y0 + self.slots[-1].height if self.slots else 0.0
 
     def index_for(self, y: float) -> int:
-        """Page index of document coordinate ``y`` (content above page 1 belongs to page 1)."""
-        if y < 0:
+        """Page index of document coordinate ``y`` (content above page 1 belongs to page 1).
+
+        The result is clamped to ``MAX_PAGES - 1``: a non-finite or huge ``y`` (or a tiny page
+        height) must not make the caller build an unbounded number of pages.
+        """
+        if not (y >= 0):  # also catches NaN
             return 0
         for i, slot in enumerate(self.slots):
             if y < slot.y0 + slot.height:
                 return i
-        return len(self.slots) + int(math.floor((y - self.end()) / self.plain_height))
+        limit = MAX_PAGES - 1
+        rest = y - self.end()
+        if not (self.plain_height > 0) or not math.isfinite(rest) or rest >= self.plain_height * (limit - len(self.slots) + 1):
+            return limit
+        return min(limit, len(self.slots) + int(math.floor(rest / self.plain_height)))
 
     def slot(self, index: int) -> _Slot:
         if index < len(self.slots):
@@ -134,9 +150,12 @@ class _Bundle:
     def __init__(self, data: bytes):
         try:
             self.zip = zipfile.ZipFile(io.BytesIO(data))
-        except zipfile.BadZipFile as exc:
-            raise ValueError("not a Notability note: not a ZIP archive") from exc
+        except (zipfile.BadZipFile, NotImplementedError, OSError, ValueError) as exc:
+            # zipfile raises NotImplementedError for unsupported ZIP features / compression
+            raise ValueError(f"not a Notability note: not a readable ZIP archive ({exc})") from exc
         names = self.zip.namelist()
+        self._budget = MAX_TOTAL_BYTES
+        self.skipped: List[str] = []  # members refused by the decompression-bomb guard
         sessions = [n for n in names if n == "Session.plist" or n.endswith("/Session.plist")]
         if not sessions:
             raise ValueError("not a Notability note: Session.plist not found")
@@ -154,8 +173,18 @@ class _Bundle:
                 return None
             name = alt
         try:
+            declared = self.zip.getinfo(name).file_size
+        except KeyError:
+            return None
+        # Decompression-bomb guard: the central directory declares the inflated size, so a
+        # member is refused before a single byte is inflated.
+        if declared > MAX_MEMBER_BYTES or declared > self._budget:
+            self.skipped.append(name)
+            return None
+        self._budget -= declared
+        try:
             return self.zip.read(name)
-        except Exception:  # noqa: BLE001 - corrupt member
+        except Exception:  # noqa: BLE001 - corrupt member (MemoryError included)
             return None
 
     def members(self, prefix: str) -> List[str]:
@@ -442,8 +471,10 @@ def _curve_to_stroke(curve: _Curve, slot: _Slot) -> Stroke:
         kind = "pen"
     pen = "pencil" if style == STYLE_PENCIL else None
 
+    x0 = slot.x0
+
     def to_pt(xy: Tuple[float, float], width: float) -> Point:
-        return Point(xy[0] * scale, (xy[1] - slot.y0 - slot.top_gap) * scale, width)
+        return Point((xy[0] - x0) * scale, (xy[1] - slot.y0 - slot.top_gap) * scale, width)
 
     fw = curve.fractional
     if curve.bezier:
@@ -530,6 +561,9 @@ class _Reader:
         self.doc = Document(source_format="notability")
         session = self.bundle.read("Session.plist")
         if session is None:
+            if self.bundle.skipped:
+                raise ValueError("not a readable Notability note: Session.plist inflates above the "
+                                 f"{MAX_MEMBER_BYTES // (1024 * 1024)} MB limit")
             raise ValueError("not a Notability note: Session.plist unreadable")
         try:
             self.archive = load_archive(session)
@@ -596,13 +630,19 @@ class _Reader:
         reflow = self.archive.get(self.rich, "reflowState")
         width = self.archive.get(reflow, "pageWidthInDocumentCoordsKey")
         if isinstance(width, (int, float)) and not isinstance(width, bool) and width > 0:
+            if width < MIN_PAGE_WIDTH or not math.isfinite(width):
+                self.warn(f"Page width {width!r} recorded in the note is not usable; "
+                          f"assuming {DEFAULT_PAGE_WIDTH:g} document units")
+                return DEFAULT_PAGE_WIDTH
             return float(width)
         sizing = self.archive.string(attrs.get("paperSizingBehavior")) or ""
         if sizing.startswith("lockedWidth:"):
             try:
-                return float(sizing.split(":")[1])
+                locked = float(sizing.split(":")[1])
             except (IndexError, ValueError):
-                pass
+                locked = 0.0
+            if math.isfinite(locked) and locked >= MIN_PAGE_WIDTH:
+                return locked
         self.warn(f"Page width not recorded in the note; assuming {DEFAULT_PAGE_WIDTH:g} document units")
         return DEFAULT_PAGE_WIDTH
 
@@ -648,7 +688,8 @@ class _Reader:
                         w, h = sizes[num - 1]
                         exact = h * width / w if w > 0 else plain_h
                         occupied = float(math.ceil(exact))
-                        slot = _Slot(y, occupied, w, h, w / width if w > 0 else PLAIN_PAGE_WIDTH_PT / width,
+                        slot = _Slot(y, x_inset(width), occupied, w, h,
+                                     w / width if w > 0 else PLAIN_PAGE_WIDTH_PT / width,
                                      top_gap=occupied - exact, background=PdfBackground(pdf_id, num - 1))
                     else:
                         self.warn(f"Page layout refers to page {num} of {file_name}, which has only {len(sizes)} pages")
@@ -724,6 +765,11 @@ class _Reader:
 
         # Pages
         page_count = max(len(layout.slots), max_index + 1, 1)
+        if page_count > MAX_PAGES:
+            self.warn(f"Note lays out {page_count} pages; only the first {MAX_PAGES} are read")
+            page_count = MAX_PAGES
+        if max_index >= MAX_PAGES - 1:
+            self.warn(f"Content placed beyond page {MAX_PAGES} was moved onto page {MAX_PAGES}")
         slots = [layout.slot(i) for i in range(page_count)]
         for i, slot in enumerate(slots):
             page = Page(slot.width_pt, slot.height_pt, background=slot.background,
@@ -739,6 +785,9 @@ class _Reader:
 
         self.read_flow_text(doc.pages[0], slots[0])
         self.report_recordings()
+        for name in self.bundle.skipped:
+            self.warn(f"Bundle member {name} inflates above the {MAX_MEMBER_BYTES // (1024 * 1024)} MB "
+                      f"per-member / {MAX_TOTAL_BYTES // (1024 * 1024)} MB total limit and was skipped")
         return doc
 
     # -- images ---------------------------------------------------------------------
@@ -782,7 +831,7 @@ class _Reader:
         ox, oy = payload["origin"]
         w, h = payload["size"]
         s = slot.scale
-        return Image(ox * s, (oy - slot.y0 - slot.top_gap) * s, w * s, h * s, payload["data"],
+        return Image((ox - slot.x0) * s, (oy - slot.y0 - slot.top_gap) * s, w * s, h * s, payload["data"],
                      fmt=payload["fmt"], rotation=payload["rotation"])
 
     # -- text -----------------------------------------------------------------------
@@ -810,7 +859,12 @@ class _Reader:
         first = runs[0] if runs else None
         color = first.color if first and first.color else (0.0, 0.0, 0.0, 1.0)
         size = first.size if first and first.size else 12.0 * s
-        return TextBox(ox * s, (oy - slot.y0 - slot.top_gap) * s, w * s, h * s, payload["text"],
+        # Notability insets the text by (5, 2) document units inside its box; the writer adds
+        # the same padding, so removing it here keeps the two codecs symmetric.
+        pad_x = min(TEXT_PAD_X, w / 2.0)
+        pad_y = min(TEXT_PAD_Y, h / 2.0)
+        return TextBox((ox + pad_x - slot.x0) * s, (oy + pad_y - slot.y0 - slot.top_gap) * s,
+                       (w - 2 * pad_x) * s, (h - 2 * pad_y) * s, payload["text"],
                        runs=runs, color=color, size=size)
 
     def read_flow_text(self, page: Page, slot: _Slot) -> None:

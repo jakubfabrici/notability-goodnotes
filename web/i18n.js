@@ -20,7 +20,6 @@ export const STRINGS = {
     "drop.label": "Vyberte alebo sem pretiahnite súbor .goodnotes alebo .note",
     "drop.hint": "Ťuknutím otvoríte výber súborov",
     "drop.choose": "Vybrať súbor",
-    "file.none": "Žiadny súbor",
     "file.selected": "{name} ({size})",
     "file.badext": "Súbor musí mať príponu .goodnotes alebo .note.",
     "file.direction.goodnotes": "GoodNotes → Notability",
@@ -42,12 +41,10 @@ export const STRINGS = {
     "convert.again": "Previesť znova",
     "reset": "Iný súbor",
 
-    "progress.engine.detect": "Zisťujem dostupný prevodník…",
     "progress.engine.loading": "Načítavam Python do prehliadača (prvýkrát ~13 MB)…",
     "progress.engine.bytes": "Stiahnuté {loaded} z {total}",
     "progress.engine.bytes.unknown": "Stiahnuté {loaded}",
     "progress.engine.package": "Inštalujem prevodník…",
-    "progress.engine.ready": "Prevodník je pripravený.",
     "progress.reading": "Čítam súbor…",
     "progress.converting": "Prevádzam {name}…",
     "progress.uploading": "Odosielam na server…",
@@ -61,6 +58,7 @@ export const STRINGS = {
     "result.share": "Zdieľať / Uložiť do Súborov",
     "result.share.failed": "Zdieľanie sa nepodarilo: {error}",
     "result.open.hint": "Na iPade otvorte stiahnutý súbor v aplikácii Súbory a zdieľajte ho do Notability alebo GoodNotes.",
+    "result.warnings.lang": "Upozornenia prevodníka sú v angličtine.",
 
     "stats.pages": "Strany",
     "stats.strokes": "Ťahy",
@@ -74,6 +72,7 @@ export const STRINGS = {
     "error.engine": "Prevodník sa nepodarilo načítať: {error}",
     "error.engine.help": "Skontrolujte pripojenie na internet (Python sa sťahuje z CDN) alebo spustite lokálny server: python -m gnnote.server",
     "error.server": "Server odpovedal chybou {status}.",
+    "error.toolarge": "Súbor ({size}) je väčší ako limit servera {limit}.",
     "error.noworker": "Tento prehliadač nepodporuje modulové Web Workery. Použite Safari 15+, Chrome alebo Firefox.",
 
     "engine.server": "Prevodník: server",
@@ -95,7 +94,6 @@ export const STRINGS = {
     "drop.label": "Choose or drop a .goodnotes or .note file here",
     "drop.hint": "Tap to open the file picker",
     "drop.choose": "Choose file",
-    "file.none": "No file",
     "file.selected": "{name} ({size})",
     "file.badext": "The file must end with .goodnotes or .note.",
     "file.direction.goodnotes": "GoodNotes → Notability",
@@ -117,12 +115,10 @@ export const STRINGS = {
     "convert.again": "Convert again",
     "reset": "Another file",
 
-    "progress.engine.detect": "Detecting the available engine…",
     "progress.engine.loading": "Loading Python into the browser (first time ~13 MB)…",
     "progress.engine.bytes": "Downloaded {loaded} of {total}",
     "progress.engine.bytes.unknown": "Downloaded {loaded}",
     "progress.engine.package": "Installing the converter…",
-    "progress.engine.ready": "Engine ready.",
     "progress.reading": "Reading the file…",
     "progress.converting": "Converting {name}…",
     "progress.uploading": "Uploading to the server…",
@@ -136,6 +132,7 @@ export const STRINGS = {
     "result.share": "Share / Save to Files",
     "result.share.failed": "Sharing failed: {error}",
     "result.open.hint": "On iPad, open the downloaded file in Files and share it to Notability or GoodNotes.",
+    "result.warnings.lang": "",
 
     "stats.pages": "Pages",
     "stats.strokes": "Strokes",
@@ -149,6 +146,7 @@ export const STRINGS = {
     "error.engine": "The engine could not be loaded: {error}",
     "error.engine.help": "Check your internet connection (Python is downloaded from a CDN) or run the local server: python -m gnnote.server",
     "error.server": "The server answered with error {status}.",
+    "error.toolarge": "The file ({size}) is larger than the server limit of {limit}.",
     "error.noworker": "This browser does not support module Web Workers. Use Safari 15+, Chrome or Firefox.",
 
     "engine.server": "Engine: server",
