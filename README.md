@@ -9,8 +9,8 @@ gnnote reads the real container formats (documented in `docs/`) and writes files
 app opens as its own.
 
 It also reads and writes the open formats of other note apps, with the ink kept editable
-(see [Other apps](#other-apps)): **Xournal++** (`.xopp`, `.xoj`) and **Saber** (`.sba`,
-`.sbn2`, `.sbn`).
+(see [Other apps](#other-apps)): **Xournal++** (`.xopp`, `.xoj`), **Saber** (`.sba`, `.sbn2`,
+`.sbn`) and **Excalidraw** (`.excalidraw`).
 
 * Pure Python 3.11+, standard library only, MIT licence, clean-room implementation.
 * Runs as a web page in the browser (Pyodide, nothing is uploaded anywhere), as a command-line
@@ -45,19 +45,20 @@ the web page, printed by the CLI and returned in the `X-GnNote-Warnings` header 
 Every supported app converts to every other one (`--to FORMAT`; without it, files of these
 apps become Notability notes). `gnnote formats` lists them.
 
-| Content | Xournal++ (`.xopp`, `.xoj`) | Saber (`.sba`; reads `.sbn2`, `.sbn`) |
-|---|---|---|
-| Handwriting | Read and written with **per-point widths** (Xournal++'s segment widths); Bezier ink is flattened to 1 pt polylines | Pressure ink both ways (perfect-freehand width law; ranges above 3:1 compressed); pencil, ballpoint and fountain pens |
-| Highlighter | Kept (Xournal++ highlighter tool) | Kept |
-| Shape fills | Kept (`fill` attribute of the outline stroke) | Dropped (warning); Saber's circle / rectangle shapes are read |
-| Images | PNG / JPEG kept; PDF stickers become LaTeX-style PDF images; rotations need Xournal++ newer than 1.3.8 | PNG / JPEG and PDF images kept; rotations and crops dropped |
-| Text boxes | Kept with font, size, colour, alignment; box sizes estimated on read | Saber has page text only: boxes become text lines near their position (bold / italic / underline kept) |
-| PDF backgrounds | Read from the ZIP-packaged `.xopp`; a gzip `.xopp` only references its PDF (plain paper, warning). Written into a ZIP-packaged `.xopp` (Xournal++ 1.2 and later); one PDF per document | Kept both ways (assets of the `.sba`; a bare `.sbn2` has none) |
-| Paper | plain / ruled / graph / dotted styles both ways; other colours as generated paper | One pattern per note (lined, grid, dots); background colour as generated paper |
-| Dropped (warning) | layers (merged), eraser strokes, audio, links (text kept), LaTeX source, dash styles | SVG images, embedded text objects, image crops |
-| Units | PDF points (1:1) | pages 1000 units wide; read at 0.595 pt per unit (A4 width), PDF pages at the PDF's size |
+| Content | Xournal++ (`.xopp`, `.xoj`) | Saber (`.sba`; reads `.sbn2`, `.sbn`) | Excalidraw (`.excalidraw`) |
+|---|---|---|---|
+| Handwriting | Read and written with **per-point widths** (Xournal++'s segment widths); Bezier ink is flattened to 1 pt polylines | Pressure ink both ways (perfect-freehand width law; ranges above 3:1 compressed); pencil, ballpoint and fountain pens | Freedraw ink with per-point pressure through Excalidraw's width law (ranges above about 3:1 compressed) |
+| Highlighter | Kept (Xournal++ highlighter tool) | Kept | Translucent ink (kind kept for gnnote in `customData`) |
+| Shape fills | Kept (`fill` attribute of the outline stroke) | Dropped (warning); Saber's circle / rectangle shapes are read | Kept as filled closed lines; Excalidraw's shapes and fills are read |
+| Images | PNG / JPEG kept; PDF stickers become LaTeX-style PDF images; rotations need Xournal++ newer than 1.3.8 | PNG / JPEG and PDF images kept; rotations and crops dropped | PNG / JPEG kept with rotation; PDF images dropped |
+| Text boxes | Kept with font, size, colour, alignment; box sizes estimated on read | Saber has page text only: boxes become text lines near their position (bold / italic / underline kept) | Kept with size, colour, alignment and rotation; one plain style |
+| PDF backgrounds | Read from the ZIP-packaged `.xopp`; a gzip `.xopp` only references its PDF (plain paper, warning). Written into a ZIP-packaged `.xopp` (Xournal++ 1.2 and later); one PDF per document | Kept both ways (assets of the `.sba`; a bare `.sbn2` has none) | Dropped (Excalidraw cannot show PDF) |
+| Paper | plain / ruled / graph / dotted styles both ways; other colours as generated paper | One pattern per note (lined, grid, dots); background colour as generated paper | None (pages become frames named "Page N"); canvas colour read as paper colour |
+| Dropped (warning) | layers (merged), eraser strokes, audio, links (text kept), LaTeX source, dash styles | SVG images, embedded text objects, image crops | arrowheads, hand-drawn roughness, hatched fills (solid), SVG images, embeds |
+| Units | PDF points (1:1) | pages 1000 units wide; read at 0.595 pt per unit (A4 width), PDF pages at the PDF's size | CSS px x 0.75 = pt |
 
-Facts, mapping and what is still unverified in each app: `docs/xournalpp.md`, `docs/saber.md`.
+Facts, mapping and what is still unverified in each app: `docs/xournalpp.md`, `docs/saber.md`,
+`docs/excalidraw.md`.
 
 ## Verification status
 
@@ -182,6 +183,7 @@ test with Chromium, once per pull-request change and on pushes to `main`; `pages
 * `docs/ecosystem.md`: import/export capabilities of both apps, existing tools, licensing.
 * `docs/xournalpp.md`: the Xournal++ `.xopp` / `.xoj` codec.
 * `docs/saber.md`: the Saber `.sba` / `.sbn2` / `.sbn` codec.
+* `docs/excalidraw.md`: the Excalidraw `.excalidraw` codec.
 * `tests/e2e/README.md`: the browser end-to-end test.
 
 ## Acknowledgements

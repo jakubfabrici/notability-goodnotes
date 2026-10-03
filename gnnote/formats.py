@@ -113,6 +113,17 @@ def _sniff_saber(data: bytes, names: Optional[List[str]]) -> bool:
         and bool(re.search(rb'"(?:z|ni)"\s*:|"s"\s*:\s*\[', head))
 
 
+_EXCALIDRAW_TYPE_RE = re.compile(rb'"type"\s*:\s*"excalidraw(?:/clipboard)?"')
+
+
+def _sniff_excalidraw(data: bytes, names: Optional[List[str]]) -> bool:
+    """A JSON object whose ``"type"`` is ``"excalidraw"`` within its first 4 KB."""
+    if names is not None:
+        return False
+    head = data[:4096].lstrip(b"\xef\xbb\xbf \t\r\n")
+    return head[:1] == b"{" and bool(_EXCALIDRAW_TYPE_RE.search(head))
+
+
 FORMATS: Dict[str, NoteFormat] = {
     f.id: f
     for f in (
@@ -139,6 +150,12 @@ FORMATS: Dict[str, NoteFormat] = {
             input_extensions=(".sba", ".sbn2", ".sbn"), sniff=_sniff_saber,
             reader="gnnote.saber.reader:read_saber",
             writer="gnnote.saber.writer:write_saber",
+        ),
+        NoteFormat(
+            id="excalidraw", name="Excalidraw", extension=".excalidraw",
+            input_extensions=(".excalidraw",), sniff=_sniff_excalidraw,
+            reader="gnnote.excalidraw.reader:read_excalidraw",
+            writer="gnnote.excalidraw.writer:write_excalidraw",
         ),
     )
 }

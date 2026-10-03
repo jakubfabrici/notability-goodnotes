@@ -47,5 +47,16 @@ export const FORMATS = [
     "readable": true,
     "writable": true,
     "defaultTarget": "notability"
+  },
+  {
+    "id": "excalidraw",
+    "name": "Excalidraw",
+    "extension": ".excalidraw",
+    "inputExtensions": [
+      ".excalidraw"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
   }
 ];

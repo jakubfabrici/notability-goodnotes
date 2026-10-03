@@ -18,7 +18,12 @@ implementation written from the byte-level research notes in `docs/`.
   the Xournal++ output in `gnnote/xournalpp/writer.py` follows inkterop's xopp writer
   (`core/src/inkterop/formats/xopp/`); the BSON codec `gnnote/saber/bson.py` and the document
   shape of `gnnote/saber/writer.py` are adapted from inkterop's Saber reader and writer
-  (`core/src/inkterop/formats/saber/`).
+  (`core/src/inkterop/formats/saber/`); the freedraw width law and the element field set of
+  `gnnote/excalidraw/` are adapted from inkterop's Excalidraw codec
+  (`core/src/inkterop/formats/excalidraw.py`).
+* The Excalidraw codec follows the scene format of **Excalidraw**
+  (https://github.com/excalidraw/excalidraw), MIT License, Copyright (c) 2020 Excalidraw; its
+  JSON schema documentation and `restore.ts` were used for the element fields.
 * **Xournal++** (https://github.com/xournalpp/xournalpp, GPL-2.0) and **Saber**
   (https://github.com/saber-notes/saber, GPL-3.0) were consulted for format facts only (their
   loaders, savers and test files); no code was copied. Their test files are fetched by the test

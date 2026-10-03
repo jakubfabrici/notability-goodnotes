@@ -61,6 +61,7 @@ gnnote/
   codecutil.py           helpers of the open-format codecs: image sniffing, polylines, bounded ZIP / inflate
   xournalpp/             Xournal++ .xopp / .xoj: reader.read_xopp, writer.write_xopp (docs/xournalpp.md)
   saber/                 Saber .sba / .sbn2 / .sbn: bson, reader.read_saber, writer.write_saber (docs/saber.md)
+  excalidraw/            Excalidraw .excalidraw: reader.read_excalidraw, writer.write_excalidraw (docs/excalidraw.md)
   formats.py             registry of the supported apps (id, extensions, sniffer, reader, writer)
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote

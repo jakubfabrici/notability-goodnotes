@@ -15,4 +15,5 @@ tests/.samples/
 *.sba
 *.sbn2
 *.sbn
+*.excalidraw
 !tests/fixtures/**
