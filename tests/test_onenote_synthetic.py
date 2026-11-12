@@ -15,6 +15,12 @@ from gnnote.onenote import read_onenote
 from gnnote.onenote import schema as S
 from tests.onenote_builder import Blob, Cell, Space, build_section, ink_dimensions, ink_path, utf16z
 
+
+def _flat(rows):
+    """Coordinate tuples as one flat list: pytest.approx compares flat sequences only."""
+    return [value for row in rows for value in row]
+
+
 K = 72.0 / 2540.0  # pt per HIMETRIC
 
 
@@ -73,8 +79,8 @@ def test_ink_units_offsets_scaling_pressure_and_colour() -> None:
     doc = read_onenote(_section([page]))
     assert doc.title == "Synthetic"
     (stroke,) = doc.pages[0].strokes
-    assert [(p.x, p.y) for p in stroke.points] == pytest.approx(
-        [(72 + x * K, 108 + 2 * y * K) for x, y in ((0, 0), (1000, 500), (2000, 1000))])
+    assert _flat((p.x, p.y) for p in stroke.points) == pytest.approx(
+        _flat([(72 + x * K, 108 + 2 * y * K) for x, y in ((0, 0), (1000, 500), (2000, 1000))]))
     assert stroke.width == pytest.approx(100 * K)
     factors = [p.width / stroke.width for p in stroke.points]
     assert factors == pytest.approx([0.25, 1.5 * 16384 / 32767 + 0.25, 1.75])

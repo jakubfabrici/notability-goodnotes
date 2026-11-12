@@ -364,7 +364,7 @@ def test_convert_too_large_rejected_before_reading(running: Tuple[str, int]) -> 
             chunks.append(chunk)
             if b"\r\n\r\n" in b"".join(chunks):
                 head, _, rest = b"".join(chunks).partition(b"\r\n\r\n")
-                length = int([l for l in head.split(b"\r\n") if l.lower().startswith(b"content-length")][0].split(b":")[1])
+                length = int([h for h in head.split(b"\r\n") if h.lower().startswith(b"content-length")][0].split(b":")[1])
                 if len(rest) >= length:
                     break
     raw = b"".join(chunks)

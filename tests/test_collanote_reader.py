@@ -35,6 +35,11 @@ S_A4 = cn.A4_PT_PER_UNIT  # pt per canvas unit of a blank notebook
 SLIDE_CANVAS = (1485.0, 835.3125)  # a 16:9 PDF note
 
 
+def _flat(rows):
+    """Coordinate tuples as one flat list: pytest.approx compares flat sequences only."""
+    return [value for row in rows for value in row]
+
+
 def _counts(doc: Document) -> Tuple[int, int, int, int]:
     return (len(doc.pages), sum(len(p.strokes) for p in doc.pages), sum(len(p.images) for p in doc.pages),
             sum(len(p.texts) for p in doc.pages))
@@ -63,8 +68,8 @@ def test_format1_blank_notebook_ink_kinds_and_scale() -> None:
     assert page.paper == "lined" and page.background is None
     pen, marker, wide, unknown = page.strokes
     assert pen.kind == "pen" and pen.controls is None and pen.color == pytest.approx((0.1, 0.2, 0.3, 1.0))
-    assert [(p.x, p.y, p.width) for p in pen.points] == pytest.approx([(100 * S_A4, 200 * S_A4, 2 * S_A4),
-                                                                        (150 * S_A4, 250 * S_A4, 2.5 * S_A4)])
+    assert _flat((p.x, p.y, p.width) for p in pen.points) == pytest.approx(_flat([(100 * S_A4, 200 * S_A4, 2 * S_A4),
+                                                                                (150 * S_A4, 250 * S_A4, 2.5 * S_A4)]))
     assert pen.width == pytest.approx(2 * S_A4)
     assert marker.kind == "highlighter" and marker.color == (1.0, 1.0, 0.0, 1.0)
     assert wide.kind == "pen" and wide.color[3] == pytest.approx(0.4946)  # the translucent pen keeps its alpha
@@ -254,8 +259,8 @@ def test_points_without_the_usual_layout_take_the_slow_path() -> None:
     # x == 0 is omitted on disk (proto3), so the point does not start with the x key
     stroke = dk_stroke([(0.0, 5.0, 2.0), (3.0, 0.0, 0.0), (7.0, 8.0, 2.0)], width=2.0)
     (page,) = read_cnote(cnote_format1(note_json(), [cpage([stroke])])).pages
-    assert [(p.x / S_A4, p.y / S_A4, p.width / S_A4) for p in page.strokes[0].points] == pytest.approx(
-        [(0.0, 5.0, 2.0), (3.0, 0.0, 2.0), (7.0, 8.0, 2.0)])  # a zero point width falls back to the style width
+    assert _flat((p.x / S_A4, p.y / S_A4, p.width / S_A4) for p in page.strokes[0].points) == pytest.approx(
+        _flat([(0.0, 5.0, 2.0), (3.0, 0.0, 2.0), (7.0, 8.0, 2.0)]))  # a zero point width falls back to the style width
 
 
 def _legacy(points_lists: List[List[Tuple[float, float]]], ink: str = "com.apple.ink.pen") -> bytes:
@@ -275,11 +280,11 @@ def test_legacy_pencilkit_pages() -> None:
     doc = read_cnote(cnote_format1(note_json(), pages))
     first, _, third, fourth, fifth = doc.pages
     legacy, modern = first.strokes  # legacy ink is older, so it lies below
-    assert [(p.x, p.y) for p in legacy.points] == pytest.approx([(100 * S_A4, 100 * S_A4), (200 * S_A4, 300 * S_A4)])
+    assert _flat((p.x, p.y) for p in legacy.points) == pytest.approx(_flat([(100 * S_A4, 100 * S_A4), (200 * S_A4, 300 * S_A4)]))
     assert legacy.color == (0.0, 0.0, 0.5, 1.0) and modern.points[0].x == pytest.approx(5 * S_A4)
     (shifted,) = third.strokes  # all of its ink lies in the band of page 3 of one long canvas
     assert shifted.kind == "highlighter"
-    assert [(p.x, p.y) for p in shifted.points] == pytest.approx([(100 * S_A4, 100 * S_A4), (300 * S_A4, 900 * S_A4)])
+    assert _flat((p.x, p.y) for p in shifted.points) == pytest.approx(_flat([(100 * S_A4, 100 * S_A4), (300 * S_A4, 900 * S_A4)]))
     assert fourth.strokes == [] and fifth.strokes == []
     text = "\n".join(doc.warnings)
     assert "Page(s) 1, 3 carry CollaNote 1.x PencilKit ink (moved up from one continuous canvas)" in text
@@ -661,7 +666,7 @@ def test_real_notes_match_a_generic_protobuf_decoding(real_notes: List[Tuple[Pat
                         x, y, w = (pb.fixed32_float(pb.get(pf, i)) if pb.get(pf, i) else 0.0 for i in (1, 2, 3))
                         expected.append((x * s, y * s, (w or style_w) * s))
             got = [(p.x, p.y, p.width) for st in page.strokes for p in st.points]
-            assert got == pytest.approx(expected, abs=1e-9), f"{path.name} {name}"
+            assert _flat(got) == pytest.approx(_flat(expected), abs=1e-9), f"{path.name} {name}"
 
 
 def test_real_notes_pdf_binding(real_notes: List[Tuple[Path, Document]]) -> None:

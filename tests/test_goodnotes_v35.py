@@ -109,10 +109,16 @@ def _bbox(page: Page, with_texts: bool, with_pencil: bool = True) -> Optional[Tu
         xs1.append(max(p.x for p in s.points) + hw)
         ys1.append(max(p.y for p in s.points) + hw)
     for im in page.images:
-        xs0.append(im.x); ys0.append(im.y); xs1.append(im.x + im.w); ys1.append(im.y + im.h)
+        xs0.append(im.x)
+        ys0.append(im.y)
+        xs1.append(im.x + im.w)
+        ys1.append(im.y + im.h)
     if with_texts:
         for t in page.texts:
-            xs0.append(t.x); ys0.append(t.y); xs1.append(t.x + t.w); ys1.append(t.y + t.h)
+            xs0.append(t.x)
+            ys0.append(t.y)
+            xs1.append(t.x + t.w)
+            ys1.append(t.y + t.h)
     if not xs0:
         return None
     return (min(xs0), min(ys0), max(xs1), max(ys1))
