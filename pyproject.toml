@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gnnote"
-description = "Convert handwritten notes between note apps (GoodNotes, Notability, Noteful, Xournal++, Saber, Excalidraw, PDF; reading also CollaNote, MyScript Notes, Flexcil, reMarkable and OneNote) keeping handwriting editable"
+description = "Convert handwritten notes between note apps (GoodNotes, Notability, Noteful, Xournal++, Saber, Excalidraw, Stylus Labs Write, PDF; reading also CollaNote, MyScript Notes, Flexcil, reMarkable, Samsung Notes, Noteastic and OneNote) keeping handwriting editable"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = []
 dynamic = ["version"]
-keywords = ["goodnotes", "notability", "noteful", "onenote", "collanote", "pdf", "handwriting", "converter", "ipad"]
+keywords = ["goodnotes", "notability", "noteful", "onenote", "collanote", "samsung-notes", "noteastic", "stylus-labs-write", "pdf", "handwriting", "converter", "ipad", "windows"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
