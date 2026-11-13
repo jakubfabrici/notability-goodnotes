@@ -71,6 +71,18 @@ export const FORMATS = [
     "defaultTarget": "notability"
   },
   {
+    "id": "styluswrite",
+    "name": "Stylus Labs Write",
+    "extension": ".svgz",
+    "inputExtensions": [
+      ".svgz",
+      ".svg"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
+  },
+  {
     "id": "collanote",
     "name": "CollaNote",
     "extension": ".cnote",
@@ -117,11 +129,34 @@ export const FORMATS = [
     "defaultTarget": "notability"
   },
   {
+    "id": "samsungnotes",
+    "name": "Samsung Notes",
+    "extension": ".sdocx",
+    "inputExtensions": [
+      ".sdocx"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
+  },
+  {
+    "id": "noteastic",
+    "name": "Noteastic",
+    "extension": ".ntcbak",
+    "inputExtensions": [
+      ".ntcbak"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
+  },
+  {
     "id": "onenote",
     "name": "OneNote",
     "extension": ".one",
     "inputExtensions": [
-      ".one"
+      ".one",
+      ".onepkg"
     ],
     "readable": true,
     "writable": false,

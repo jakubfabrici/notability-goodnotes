@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gnnote"
-description = "Convert handwritten notes between note apps (GoodNotes, Notability, Noteful, Xournal++, Saber, Excalidraw, PDF; reading also CollaNote, MyScript Notes, Flexcil, reMarkable and OneNote) keeping handwriting editable"
+description = "Convert handwritten notes between note apps (GoodNotes, Notability, Noteful, Xournal++, Saber, Excalidraw, Stylus Labs Write, PDF; reading also CollaNote, MyScript Notes, Flexcil, reMarkable, Samsung Notes, Noteastic and OneNote) keeping handwriting editable"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = []
 dynamic = ["version"]
-keywords = ["goodnotes", "notability", "noteful", "onenote", "collanote", "pdf", "handwriting", "converter", "ipad"]
+keywords = ["goodnotes", "notability", "noteful", "onenote", "collanote", "samsung-notes", "noteastic", "stylus-labs-write", "pdf", "handwriting", "converter", "ipad", "windows"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -48,6 +48,10 @@ version = { attr = "gnnote.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["gnnote*"]
+
+[tool.ruff.lint]
+# ruff's classic default rules, written out so a newer ruff does not change what is checked
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

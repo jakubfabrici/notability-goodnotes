@@ -15,7 +15,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import pytest
 
 from gnnote import pdfutil
-from gnnote.pdfutil import PdfInfo, PdfPage, make_paper_pdf, pdf_info
+from gnnote.pdfutil import PdfInfo, make_paper_pdf, pdf_info
 
 # ---------------------------------------------------------------------------------
 # helpers

@@ -41,13 +41,13 @@ jobs:
       # checked out at the commit pinned in tests/conftest.py so the corpus is the same on
       # every run (the cache key above changes with the pins).  A clone that fails (network,
       # repository gone) only makes the tests that need it skip.
-      - name: Clone reference repositories at their pinned commits (test oracles and sample files)
+      - name: Clone reference repositories at their pinned commits and fetch the pinned sample files
         run: |
           python - <<'EOF'
           import shutil, sys
           from pathlib import Path
           sys.path.insert(0, ".")
-          from tests.conftest import LARGE, REPOS, SPARSE, clone_pinned
+          from tests.conftest import LARGE, PINNED_FILES, REPOS, SPARSE, clone_pinned, fetch_large_file
           root = Path("tests/.samples")
           root.mkdir(parents=True, exist_ok=True)
           for name, (url, sha) in REPOS.items():
@@ -64,6 +64,17 @@ jobs:
               except Exception as exc:  # noqa: BLE001
                   shutil.rmtree(target, ignore_errors=True)
                   print("skipped:", name, exc)
+          # single pinned files (PINNED_FILES), kept only when their size and SHA-256 match
+          for name, (url, sha256, size) in PINNED_FILES.items():
+              target = root / "files" / name
+              if target.is_file():
+                  print("present:", name)
+                  continue
+              try:
+                  fetch_large_file(target, url, sha256, size, timeout=120.0)
+                  print("downloaded:", name)
+              except Exception as exc:  # noqa: BLE001
+                  print("skipped:", name, exc)
           EOF
 
       - name: Install oracle dependencies (parser-for-goodnotes needs numpy; the PDF tests check output with PyMuPDF)
@@ -77,6 +88,32 @@ jobs:
           # never clone from inside pytest: whatever the step above could not fetch is skipped
           GNNOTE_OFFLINE: "1"
         run: python -m pytest -q
+
+  # requires-python is >=3.11, and Debian 12 ships 3.11.2, while setup-python's "3.11" above is
+  # the latest 3.11.x: CPython 3.11.0 to 3.11.4 have regular expression bugs (possessive
+  # quantifiers, atomic groups) that only an early 3.11 shows.  The sample repositories are not
+  # fetched here; the tests that need them skip.
+  oldest-python:
+    name: pytest (Debian 12 system Python 3.11.2, no samples)
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - name: Install Python and git
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3 python3-venv git ca-certificates
+
+      - uses: actions/checkout@v4
+
+      - name: Install gnnote with test extras
+        run: |
+          python3 -m venv /opt/venv
+          /opt/venv/bin/python -m pip install -e ".[test]"
+
+      - name: Run tests
+        env:
+          GNNOTE_OFFLINE: "1"
+        run: /opt/venv/bin/python -m pytest -q
 
   e2e:
     name: browser end-to-end (Pyodide)

@@ -144,9 +144,6 @@ function formatById(id) {
 // A .zip is accepted as well: OneDrive downloads a OneNote notebook folder as one, and a
 // renamed note file may end in .zip too. The converter recognises the format by content.
 const CONTAINER_EXTENSIONS = [".zip"];
-// Not advertised, but passed on: the converter cannot read a OneNote .onepkg package and
-// answers with how to download the notebook as a .zip instead.
-const EXPLAINED_EXTENSIONS = [".onepkg"];
 
 function readableExtensions() {
   return FORMATS.filter((f) => f.readable).flatMap((f) => f.inputExtensions);
@@ -167,7 +164,7 @@ function withoutZip(name) {
 
 function containerExtensionOf(name) {
   const lower = String(name || "").toLowerCase();
-  return CONTAINER_EXTENSIONS.concat(EXPLAINED_EXTENSIONS).find((ext) => lower.endsWith(ext)) || null;
+  return CONTAINER_EXTENSIONS.find((ext) => lower.endsWith(ext)) || null;
 }
 
 /** The format a file name announces ("Name.cnote.zip" counts as .cnote); null when unknown. */

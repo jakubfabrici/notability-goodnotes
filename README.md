@@ -17,12 +17,15 @@ own.
 | Xournal++ | `.xopp`, `.xoj` | yes | yes (`.xopp`) |
 | Saber | `.sba`, `.sbn2`, `.sbn` | yes | yes (`.sba`) |
 | Excalidraw | `.excalidraw` | yes | yes |
+| Stylus Labs Write | `.svgz`, `.svg` | yes | yes (`.svgz`; not yet opened in Write) |
 | PDF | `.pdf` | yes: ink, shape, highlight and text annotations become editable | yes: ink drawn into the pages, or kept as ink annotations that PDF apps can still edit |
 | CollaNote | `.cnote` (the file, or its package folder zipped) | yes | not yet (needs tests in the app) |
 | MyScript Notes (Nebo) | `.nebo` | yes (handwriting) | no |
 | Flexcil | `.flx`, `.flex` backups | yes | no |
 | reMarkable | `.rmdoc`, `.rm` (v6 page) | yes | no |
-| Microsoft OneNote | `.one` sections, notebook `.zip` downloaded from OneDrive | yes | no (OneNote on iPad and Mac cannot open files) |
+| Samsung Notes (Windows, Galaxy) | `.sdocx` | yes | no |
+| Noteastic (Windows) | `.ntcbak` library backup | yes (experimental: not yet checked against a real backup) | no (use PDF with editable annotations) |
+| Microsoft OneNote | `.one` sections, notebook `.zip` downloaded from OneDrive, `.onepkg` notebook packages from OneNote for Windows | yes | no (OneNote on iPad and Mac cannot open files) |
 
 `python3 -m gnnote formats` prints the same list. Every readable format converts to every
 writable one (`--to FORMAT`); without `--to`, GoodNotes and Notability swap and every other
@@ -127,6 +130,14 @@ Notability files. Nothing here has been checked on a device of the source app.
 | Flexcil (`.flx`; `.flex` backups: the first document of the library, the others are named in a warning) | Editable ink with per-point widths, colours and highlighters; shapes (lines, rectangles, ellipses, polygons, arcs, arrows) become ink strokes; text boxes and images are kept | Every page keeps its PDF page as a PDF background (Flexcil templates included) | Masking objects, links, audio; lasso transforms and dashes are drawn untransformed and solid; image placement is unverified |
 | reMarkable (`.rmdoc` from the desktop app; single v6 `.rm` pages) | Editable ink with the device's rendered widths, colours (palette or RGBA), highlighters and shaders; text highlights become highlighter strokes | Notebook pages at 226 dpi (reMarkable 2 or Paper Pro canvas, grown to fit ink), template style as paper; PDF pages keep their PDF background | Erasers, hidden layers, inserted images; typed text and strokes anchored to it are placed approximately; EPUBs without a PDF rendition become plain pages |
 
+### Samsung Notes, Noteastic and Stylus Labs Write
+
+| App (files) | Handwriting | Pages and backgrounds | Not converted (one warning each) |
+|---|---|---|---|
+| Samsung Notes (`.sdocx`, Windows and Galaxy) | Editable ink with pressure widths (Samsung's own width model, approximate), colours and highlighters; shapes and lines become ink strokes, solid fills become shape fills; pictures keep position, rotation and PNG crops; text boxes and the note's body text become text boxes (body text laid out per paragraph, positions approximate) | Pages 600 pt wide as in the app's PDF export; lined, grid and dotted paper as paper; an imported PDF page as its background (unverified) | Erasers, hidden layers, grouped objects, arrows, gradients and dashes, tables, voice recordings, some text formatting (strikethrough, list bullets, highlight colours) |
+| Noteastic (`.ntcbak`, the whole-library backup of Settings > Backup; **experimental**) | Editable ink with pressure widths, colours and highlighters; lines, arrows and shapes become ink strokes and shape fills; pictures and text boxes are kept | Every notebook of the library, in library order, in one document; paper as paper; imported PDF pages as PDF backgrounds | Formatting spans of text boxes; the format is known from one open-source project, not yet from a backup made by the app, so every result carries a warning (`docs/noteastic.md`) |
+| Stylus Labs Write (`.svgz`, `.svg`) | Read: pen and flat-pen ink with its widths, highlighters, pictures and text; written as Write's own pen strokes (pressure as flat-pen outlines), not yet opened in Write | Page size and ruling (lined, grid, dotted, paper colour) | Writing: PDF backgrounds; text boxes become SVG text that Write cannot edit |
+
 ### OneNote (read only)
 
 | OneNote content | In GoodNotes / Notability |
@@ -137,11 +148,11 @@ Notability files. Nothing here has been checked on a device of the source app.
 | Pictures (PNG/JPEG), PDF printouts | Images (a printout as one picture per page; the PDF itself is not carried over) |
 | Typed text and page titles | Text boxes with formatting; positions and line breaks approximate (OneNote reflows text itself) |
 | Pages | One page each; OneNote's unbounded page grows to hold its content |
-| Notebook `.zip` | All sections merged into one document, in the notebook's section order |
+| Notebook `.zip` or `.onepkg` | All sections merged into one document, in the notebook's section order |
 
 Dropped with a warning: tables, math, note tags, attached files, recordings, other picture
-formats. Refused with an explanation: password-protected sections, `.onepkg` packages, a
-`.onetoc2` on its own. Writing OneNote is not supported. On an iPad, download the notebook
+formats. Refused with an explanation: password-protected sections, a `.onetoc2` on its own,
+`.onepkg` packages split over several cabinet files or compressed with Quantum. Writing OneNote is not supported. On an iPad, download the notebook
 folder from onedrive.live.com in Safari (select the folder, *Download*) and convert the
 `.zip`; see `docs/onenote.md` for the steps and the details.
 
@@ -154,13 +165,28 @@ shape (straight sides stay straight; ellipses are sampled), only their transluce
 dropped, with a warning.  Every other lossy step adds one human-readable warning, shown in
 the web page, printed by the CLI and returned in the `X-GnNote-Warnings` header of the server.
 
+## Windows apps
+
+Notes also move between the iPad and pen apps on a Windows PC. Most Windows PDF apps keep pen
+strokes as PDF ink annotations (high confidence for Acrobat and Xodo, medium for Drawboard PDF
+and Edge), which gnnote reads and writes (`--pdf-ink annotations`, "As editable annotations" on
+the web page; one width per stroke on the way back). Xournal++, Saber, Excalidraw and Stylus
+Labs Write use files gnnote writes (Rnote through its `.xopp` import and export), Goodnotes for
+Windows imports `.goodnotes`, and OneNote, Samsung Notes, Nebo, Microsoft Journal (through
+OneNote) and Noteastic backups (experimental) convert towards the iPad.
+[docs/windows.md](docs/windows.md) gives the route, menu paths and caveats for each app, and
+`tools/make_windows_testkit.py` builds a test kit for checking the routes on Windows, where
+none has been checked yet.
+
 ## Verification status
 
 * GoodNotes -> Notability ink import is confirmed on the author's iPad with a one-page test.
 * Everything else is validated against third-party parsers, sample files and the apps' own
   PDF exports, not yet on devices: generated Noteful, Xournal++, Saber and Excalidraw files
   have not been opened in those apps, and no OneNote notebook made on an iPad has been read
-  yet. Each format's notes in `docs/` list what to check on a device and which sample files
+  yet. The Windows formats (Samsung Notes, Noteastic, OneNote `.onepkg`, Stylus Labs Write)
+  are checked against public sample files, cabinets made by Windows' `makecab` and synthetic
+  files; the Noteastic reader has not yet seen a backup made by the app. Each format's notes in `docs/` list what to check on a device and which sample files
   would close the gaps.
 * PDF output and input are checked with MuPDF (PyMuPDF, as a test oracle: renders, text
   extraction, no warnings) and against GoodNotes' own PDF exports of the sample notebooks.
@@ -309,6 +335,10 @@ test with Chromium, once per pull-request change and on pushes to `main`; `pages
 * `docs/nebo.md`: MyScript Notes / Nebo packages and BINK ink, and how gnnote maps them.
 * `docs/flexcil.md`: Flexcil documents and backups, and how gnnote maps them.
 * `docs/remarkable.md`: reMarkable documents and v6 pages, and how gnnote maps them.
+* `docs/samsungnotes.md`: Samsung Notes `.sdocx` notes, and how gnnote maps them.
+* `docs/noteastic.md`: Noteastic's `.ntcbak` library backup (experimental reader).
+* `docs/styluswrite.md`: the Stylus Labs Write SVG codec.
+* `docs/windows.md`: Windows note apps: the route to and from the iPad for each, and a test kit.
 * `docs/xournalpp.md`: the Xournal++ `.xopp` / `.xoj` codec.
 * `docs/saber.md`: the Saber `.sba` / `.sbn2` / `.sbn` codec.
 * `docs/excalidraw.md`: the Excalidraw `.excalidraw` codec.
@@ -327,8 +357,11 @@ separate-process test oracles (see `NOTICE.md`):
 [notesconverter](https://github.com/samuelsadok/notesconverter),
 [Notability-notes-converter](https://github.com/nokcha0/Notability-notes-converter),
 [svg2notability](https://github.com/jvns/svg2notability),
-[denotability](https://github.com/miroreo/denotability) and
-[collanote_cnote_to_pdf_converter](https://github.com/alarsama/collanote_cnote_to_pdf_converter).
+[denotability](https://github.com/miroreo/denotability),
+[collanote_cnote_to_pdf_converter](https://github.com/alarsama/collanote_cnote_to_pdf_converter),
+[sdocx2pdf](https://github.com/squ1dd13/sdocx2pdf),
+[noteastic-mcp-public](https://github.com/Canxinner/noteastic-mcp-public) and
+[pdftowrite](https://github.com/kosmospredanie/pdftowrite).
 The OneNote reader follows Microsoft's published [MS-ONESTORE], [MS-FSSHTTPB] and [MS-ONE]
 specifications; its ink facts were checked against the
 [onenote.rs](https://github.com/msiemens/onenote.rs) wiki and its tests use
@@ -337,7 +370,11 @@ specifications; its ink facts were checked against the
 [Interop-TestSuites](https://github.com/OfficeDev/Interop-TestSuites),
 [libmson](https://github.com/blu-base/libmson),
 [Obsidian Importer](https://github.com/obsidianmd/obsidian-importer) and
-[py-onenote-parser](https://github.com/Kev744/py-onenote-parser).
+[py-onenote-parser](https://github.com/Kev744/py-onenote-parser); its `.onepkg` unpacking is
+ported from the Obsidian Importer's cabinet and LZX code (itself ported from
+[OfficeIMO](https://github.com/EvotecIT/OfficeIMO)). The Samsung Notes tests use the
+[SDOCX Compatibility Corpus](https://huggingface.co/datasets/twangodev/sdocx-compatibility)
+(CC BY 4.0).
 GoodNotes, Notability, Noteful, CollaNote and the other apps named here are trademarks of their
 respective owners; this project is not affiliated with any of them.
 

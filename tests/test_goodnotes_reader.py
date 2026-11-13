@@ -484,7 +484,10 @@ def test_against_goodnotes_pdf_export(samples):
         xs1.append(max(p.x for p in s.points) + hw)
         ys1.append(max(p.y for p in s.points) + hw)
     for im in page.images:
-        xs0.append(im.x); ys0.append(im.y); xs1.append(im.x + im.w); ys1.append(im.y + im.h)
+        xs0.append(im.x)
+        ys0.append(im.y)
+        xs1.append(im.x + im.w)
+        ys1.append(im.y + im.h)
     mine = (min(xs0), min(ys0), max(xs1), max(ys1))
     rects = [d["rect"] for d in drawings if d["rect"].height > 0.5] + [pymupdf.Rect(i["bbox"]) for i in pg.get_image_info()]
     theirs = (min(r.x0 for r in rects), min(r.y0 for r in rects), max(r.x1 for r in rects), max(r.y1 for r in rects))

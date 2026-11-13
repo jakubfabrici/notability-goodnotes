@@ -427,7 +427,10 @@ def test_matches_poc_output(samples):
     pl, a = load_session(data)
 
     assert sorted(members(data)) == poc_members
-    classes = lambda plist: {o["$classname"] for o in plist["$objects"] if isinstance(o, dict) and "$classname" in o}
+
+    def classes(plist):
+        return {o["$classname"] for o in plist["$objects"] if isinstance(o, dict) and "$classname" in o}
+
     assert classes(pl) == classes(p_pl)
     assert key_set(a.root) == key_set(p.root)
     assert key_set(a.get(a.root, "richText")) == key_set(p.get(p.root, "richText"))

@@ -71,13 +71,19 @@ gnnote/
   flexcil/reader.py      read_flexcil(data: bytes, document=None) -> Document  (Flexcil .flx / .flex, read only)
   remarkable/scene.py    reMarkable v6 scene: tagged blocks, CRDT order, lines, glyphs, text
   remarkable/reader.py   read_remarkable(data: bytes) -> Document      (reMarkable .rmdoc / .rm, read only)
+  samsungnotes/records.py  S-Pen SDK records: frames, bitfields, strings, delta-compressed stroke events
+  samsungnotes/reader.py   read_sdocx(data: bytes) -> Document         (Samsung Notes .sdocx, read only)
   codecutil.py           helpers of the open-format codecs: image sniffing, polylines, bounded ZIP / inflate
   xournalpp/             Xournal++ .xopp / .xoj: reader.read_xopp, writer.write_xopp (docs/xournalpp.md)
   saber/                 Saber .sba / .sbn2 / .sbn: bson, reader.read_saber, writer.write_saber (docs/saber.md)
   excalidraw/            Excalidraw .excalidraw: reader.read_excalidraw, writer.write_excalidraw (docs/excalidraw.md)
+  styluswrite/           Stylus Labs Write .svgz / .svg: svgpath (path data, transforms), reader.read_write_svg,
+                         writer.write_write_svg (docs/styluswrite.md)
   onenote/               read only: common.py (bounded bytes, property sets), native.py (desktop
                          revision store), package.py (OneDrive packaging), schema.py, ink.py,
                          reader.py read_onenote(data: bytes) -> Document  (docs/onenote.md)
+  sqliteutil.py          bounded read-only SQLite from bytes (deserialize, real tables only, quick_check, named columns)
+  noteastic/reader.py    read_ntcbak(data: bytes) -> Document          (Noteastic .ntcbak, read only, experimental)
   formats.py             the format registry: id, name, extensions, content sniffer, reader / writer paths
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
@@ -135,7 +141,10 @@ gnnote.nebo.reader.read_nebo(data: bytes) -> Document                 # read onl
 gnnote.flexcil.reader.read_flexcil(data: bytes, document=None) -> Document   # read only
 gnnote.flexcil.reader.list_flexcil_documents(data: bytes) -> List[FlexcilEntry]
 gnnote.remarkable.reader.read_remarkable(data: bytes) -> Document     # read only
+gnnote.samsungnotes.reader.read_sdocx(data: bytes) -> Document        # read only
 gnnote.onenote.reader.read_onenote(data: bytes) -> Document   # .one (both packagings) or a notebook .zip
+gnnote.styluswrite.reader.read_write_svg(data: bytes) -> Document              # Write .svgz / .svg / .htm
+gnnote.styluswrite.writer.write_write_svg(doc: Document, options: Options) -> bytes   # .svgz; docs/styluswrite.md
 ```
 
 Every format is one entry of `gnnote/formats.py` (`FORMATS`): id, name, extensions, a content
@@ -417,6 +426,12 @@ Their byte layouts, mappings and open questions are in their own notes:
   backgrounds, text boxes, images; one document per backup).
 * reMarkable `.rmdoc` / `.rm`: `docs/remarkable.md` (v6 scenes ported from rmscene, stored
   rendered widths, 226-dpi pages or PDF pages, highlights, approximate typed-text anchors).
+* Samsung Notes `.sdocx`: `docs/samsungnotes.md` (ported from inkterop and sdocx2pdf; pages
+  600 pt wide as in the app's PDF export, pressure widths, highlighters, shapes as strokes,
+  pictures, the body text laid out per paragraph).
+* Noteastic `.ntcbak` (experimental): `docs/noteastic.md` (a ZIP holding the SQLite library
+  `noteastic.db`, read through `gnnote/sqliteutil.py`; schema from one MIT project, not yet
+  checked against a backup made by the app, so every document carries a warning saying so).
 
 ## 5. Web UI (`web/`)
 

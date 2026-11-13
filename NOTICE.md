@@ -23,6 +23,12 @@ implementation written from the byte-level research notes in `docs/`.
   (`core/src/inkterop/formats/saber/`); the freedraw width law and the element field set of
   `gnnote/excalidraw/` are adapted from inkterop's Excalidraw codec
   (`core/src/inkterop/formats/excalidraw.py`).
+  The Samsung Notes record reader `gnnote/samsungnotes/records.py` ports inkterop's `.sdocx`
+  reader (`core/src/inkterop/formats/sdocx.py`, commit
+  f16eb8d2a425637aab629e6cc90c00a18f17009f): the cursor and bitfield primitives, the
+  fixed-point deltas, the plain and delta-compressed stroke event decoder, the stroke field
+  list, the layer and page layout, the page list and the string registry of `note.note`; the
+  same notice applies to these parts.
 * The Excalidraw codec follows the scene format of **Excalidraw**
   (https://github.com/excalidraw/excalidraw), MIT License, Copyright (c) 2020 Excalidraw; its
   JSON schema documentation and `restore.ts` were used for the element fields.
@@ -33,6 +39,28 @@ implementation written from the byte-level research notes in `docs/`.
 * The Saber ink width law is the documented radius formula of **perfect-freehand**
   (https://github.com/steveruizok/perfect-freehand, Dart port by Adil Hanney, MIT); no code was
   copied.
+* **Stylus Labs Write** (`gnnote/styluswrite/`, `docs/styluswrite.md`): the document and page
+  skeleton the writer emits (`svg#write-document` with `rect#write-doc-background`,
+  `svg.write-page` holding `g.write-content` and a `g.ruleline` that starts with
+  `rect.pagerect`) follows the templates of **pdftowrite**
+  (https://github.com/kosmospredanie/pdftowrite @ 2e25ee29696e8a93e0e00ab50b10b2b7d6d63d3a,
+  `pdftowrite/data/document.svg` and `pdftowrite/data/page.svg`), MIT License, Copyright (c)
+  2021 Космическое П. (kosmospredanie@yandex.ru). The MIT permission notice quoted above for
+  inkterop applies to those adapted parts in the same way. The reader's handling of Write's
+  alpha-first `rulecolor`, its page discovery (any `svg` holding a `g.write-content`) and its
+  transform composition follow inkterop's Write reader
+  (`core/src/inkterop/formats/svg/write.py` and `reader.py` at
+  f16eb8d2a425637aab629e6cc90c00a18f17009f), under the inkterop notice above. Write's FAQ
+  (http://www.styluslabs.com/faq/) and the README of **styluslabs/templates**
+  (https://github.com/styluslabs/templates, no licence) were used for facts only. The Write
+  application's source code (https://github.com/styluslabs/Write, AGPL-3.0) was not consulted;
+  its AGPL data files (`scribbleres/Intro.svg`, `Help.html`, `clippings.html`) were only
+  inspected for facts and are not part of this repository. The path data and transform parser
+  `gnnote/styluswrite/svgpath.py` is written from the SVG 1.1 specification. The test suite
+  reads two pages of the Stylus Labs web site (http://www.styluslabs.com/svg/site1_page006.svg
+  and site1_page007.svg, no licence stated, SHA-256 pinned in `tests/conftest.py`) and
+  inkterop's CC0 fixture `core/tests/fixtures/svg/write-mini.svg` as external test data; none
+  of them is committed.
 * The PencilKit format description in `docs/collanote.md` section 5 builds on inkterop's
   `docs/formats/pencilkit.md` by Caleb (cable729), licensed CC BY 4.0
   (https://creativecommons.org/licenses/by/4.0/); the stroke transform, deleted-stroke and
@@ -133,6 +161,54 @@ implementation written from the byte-level research notes in `docs/`.
   (https://github.com/szainababbas/RM-Sticker-Press, GPL-3.0); no code from it was used, and
   its sample files are only read by the tests from its own checkout. rmscene runs only as a
   separate-process test oracle.
+* **Samsung Notes** (`gnnote/samsungnotes/`, `docs/samsungnotes.md`): besides the inkterop
+  port above, these parts are adapted from **sdocx2pdf**
+  (https://github.com/squ1dd13/sdocx2pdf, commit 372ef723a6857b2b878ee9a1dfb9520a8f83edf8, MIT
+  License, Copyright (c) 2026 squ1dd13):
+  - the record layouts of the object base, the strokes' optional fields 18 to 25 and property
+    bit 12, shapes, lines, pictures (with their border fields), fill effects, rich text, the
+    page's optional fields (paper template, imported-PDF placements, handwriting-recognition
+    data, custom page objects), the font-size field of `note.note`, `media/mediaInfo.dat` and
+    `end_tag.bin`;
+  - the paper-template numbers;
+  - the stroke rendering model (width = pen size x clamp(pressure, 0.4, 0.7), a constant 0.45
+    x pen size for pens without pressure, the highlighter pen families).
+  The MIT permission notice quoted for inkterop above applies to these adapted parts in the
+  same way. Provenance: sdocx2pdf does not state how its author learned the format, and its source
+  comments name functions and libraries of Samsung's own app; the maintainer accepted it as a
+  fact source (`docs/samsungnotes.md` section 1). inkterop's reader also states that it learned its facts
+  from sdocx2pdf. Format facts were also checked against inkterop's `docs/formats/sdocx.md`
+  (CC BY 4.0, Copyright (c) 2026 Caleb (cable729),
+  https://creativecommons.org/licenses/by/4.0/); no text from it is reused. No code from
+  twangodev/sdocx (GPL-3.0), from bxff/samsung-notes-format (derived from decompiling the app)
+  or from inkterop's `device-mods/vendor/` (GPL-3.0) was used. inkterop's reader runs only as
+  a separate-process test oracle.
+* The Samsung Notes tests read the **SDOCX Compatibility Corpus** by the SDOCX Compatibility
+  Corpus contributors (https://huggingface.co/datasets/twangodev/sdocx-compatibility, revision
+  0865fd317776fa4fd60388e93724f789476541d4), licensed CC BY 4.0
+  (https://creativecommons.org/licenses/by/4.0/). It holds four notes written by Samsung Notes
+  and the app's own PDF exports of them. The files are fetched unchanged at test time
+  (`tests/conftest.py` `PINNED_FILES`) and are not part of this repository. The text-position
+  values in `tests/test_samsungnotes.py` were measured from the corpus's
+  `01-basic-formatting.pdf`. The photo in `03-image-placement` is scikit-image's "chelsea"
+  image (CC0). The tests also read inkterop's CC0 fixture
+  `core/tests/fixtures/sdocx/synthetic-two-page.sdocx` from the pinned inkterop checkout.
+* **Noteastic** (`gnnote/noteastic/`, `gnnote/sqliteutil.py`, `tests/ntcbak_builder.py`,
+  `docs/noteastic.md`): the following facts are taken from **noteastic-mcp-public**
+  (https://github.com/Canxinner/noteastic-mcp-public, commit
+  `0182e7886f73a119473f1ffd23e2327ba8c24ad7`, files `src/backup.js`, `src/export.js` and
+  `test/backup.test.js`), MIT License, Copyright (c) 2026 Noteastic MCP contributors: the
+  layout of the `.ntcbak` library backup (a ZIP holding the SQLite database `noteastic.db`
+  plus the imported PDFs and pictures, with Windows-style member paths), the tables and
+  columns, the `PointsData` text encoding, the `#AARRGGBB` colours, the element matrices, the
+  names of the element, line and shape types, soft deletion and the draw order. The reader and
+  the SQLite helper were written new in Python from those facts; no code was copied. The test
+  builder `tests/ntcbak_builder.py` creates the same tables and columns as that project's test
+  fixture (`test/backup.test.js`), written out with gnnote's own type declarations. The schema
+  b-tree check in `gnnote/sqliteutil.py` follows the page layout described in SQLite's file
+  format documentation (https://www.sqlite.org/fileformat2.html, public domain); no SQLite
+  code was copied. No Noteastic program code was inspected and no backup made by the app was
+  available, so the reader is marked experimental.
 * The OneNote reader (`gnnote/onenote/`) was written from Microsoft's [MS-ONESTORE],
   [MS-FSSHTTPB] and [MS-ONE] specifications, which Microsoft publishes under the Open
   Specification Promise, and from the reverse-engineered ink layout of the **onenote.rs**
@@ -140,8 +216,66 @@ implementation written from the byte-level research notes in `docs/`.
   files; see `docs/onenote.md`). The pressure-to-width factor `1.5 p + 0.25` is the one
   WPF's ink renderer (https://github.com/dotnet/wpf, MIT) uses; it is a formula, no code was
   taken. No code from onenote.rs (MPL-2.0), Joplin (AGPL-3.0 / MPL-2.0), oneconv or
-  OneNoteViewer (GPL-3.0), libmson (LGPL-2.1), OfficeIMO or the Obsidian Importer (MIT) was
-  copied or adapted.
+  OneNoteViewer (GPL-3.0) or libmson (LGPL-2.1) was copied or adapted.
+* The `.onepkg` unpacking of the OneNote reader (`gnnote/onenote/cab.py`, the Microsoft
+  Cabinet reader, and `gnnote/onenote/lzx.py`, the LZX decoder) is ported by hand from
+  `src/formats/onenote-file/cabinet/cabinet.ts` and `src/formats/onenote-file/cabinet/lzx.ts`
+  of the **Obsidian Importer** (https://github.com/obsidianmd/obsidian-importer, commit
+  d2cb052c365999118c75c998254fcbb1c15a13fe), MIT License, Copyright (c) 2023 Obsidian. Those
+  files state that they were ported from **OfficeIMO** (https://github.com/EvotecIT/OfficeIMO),
+  MIT License, Copyright (c) 2022 Evotec. The port follows their structure (the parsing of the
+  cabinet header, folders, files and data blocks; the LZX decoder's block, tree, match and E8
+  translation logic) and adds MSZIP folders, table-driven Huffman decoding, budgets and
+  hardening. The facts were checked against Microsoft's [MS-CAB] and [MS-PATCH] documentation.
+  The test-side cabinet builder and LZX encoder (`tests/cab_builder.py`) were written from
+  those specifications. The Rust crate lzxd (https://github.com/Lonami/lzxd, MIT OR
+  Apache-2.0) was consulted for facts and run, during development only, as an independent
+  decoder; none of its code is used. libmspack, cabextract, 7-Zip/p7zip and wimlib (GPL / LGPL)
+  were not consulted. The makecab test fixtures (from OfficeIMO's tests, MIT) are fetched by
+  the test suite with the Obsidian Importer's other OneNote samples and are not part of this
+  repository. Both licences apply to the ported parts. Their notices are also reproduced at
+  the top of `cab.py` and `lzx.py`, so that they travel with the code in the web bundle and
+  the wheel:
+
+  > MIT License
+  >
+  > Copyright (c) 2023 Obsidian
+  >
+  > Permission is hereby granted, free of charge, to any person obtaining a copy of this
+  > software and associated documentation files (the "Software"), to deal in the Software
+  > without restriction, including without limitation the rights to use, copy, modify, merge,
+  > publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+  > to whom the Software is furnished to do so, subject to the following conditions:
+  >
+  > The above copyright notice and this permission notice shall be included in all copies or
+  > substantial portions of the Software.
+  >
+  > THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+  > INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+  > PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+  > FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+  > OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+  > DEALINGS IN THE SOFTWARE.
+
+  > MIT License
+  >
+  > Copyright (c) 2022 Evotec
+  >
+  > Permission is hereby granted, free of charge, to any person obtaining a copy of this
+  > software and associated documentation files (the "Software"), to deal in the Software
+  > without restriction, including without limitation the rights to use, copy, modify, merge,
+  > publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+  > to whom the Software is furnished to do so, subject to the following conditions:
+  >
+  > The above copyright notice and this permission notice shall be included in all copies or
+  > substantial portions of the Software.
+  >
+  > THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+  > INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+  > PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+  > FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+  > OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+  > DEALINGS IN THE SOFTWARE.
 * **one2html** (https://github.com/msiemens/one2html, MIT) is used **only as a test oracle**:
   the OneNote tests run its binary in a separate process when it is available. Two layout
   facts were read from its source (where a page title is drawn, and that a nested ink

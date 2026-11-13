@@ -139,6 +139,40 @@ def _sniff_remarkable(data: bytes, names: Optional[List[str]]) -> bool:
         any(n.endswith(".metadata") for n in top) or any(n.endswith(".rm") for n in names))
 
 
+def _sniff_samsungnotes(data: bytes, names: Optional[List[str]]) -> bool:
+    """Samsung Notes: ``note.note`` plus ``pageIdInfo.dat`` or ``end_tag.bin``, at the top of
+    the archive or under exactly one folder (a zipped note folder of the Windows app)."""
+    if not names:
+        return False
+    files = set(names)
+    for name in names:
+        if name.rsplit("/", 1)[-1] != "note.note":
+            continue
+        prefix = name[:-len("note.note")]
+        if prefix.count("/") <= 1 and not prefix.startswith("__MACOSX/") and \
+                (prefix + "pageIdInfo.dat" in files or prefix + "end_tag.bin" in files):
+            return True
+    return False
+
+
+def _sniff_noteastic(data: bytes, names: Optional[List[str]]) -> bool:
+    """Noteastic: a ``.ntcbak`` backup (a ZIP holding ``noteastic.db``, at the top or one folder
+    down, any case) or a bare SQLite database whose schema names Noteastic's tables."""
+    if names is not None:
+        for name in names:
+            parts = name.replace("\\", "/").split("/")
+            if len(parts) <= 2 and parts[-1].lower() == "noteastic.db" and parts[0] != "__MACOSX":
+                return True
+        return False
+    if not data.startswith(b"SQLite format 3\x00"):
+        return False
+    from .sqliteutil import schema_area  # small and stdlib only; imported here like the readers
+
+    # The schema starts on page 1 but moves to pages anywhere in the file once it outgrows it.
+    schema = schema_area(data)
+    return b"StrokeElement" in schema and (b"PageContent" in schema or b"BookContent" in schema)
+
+
 _XML_ROOT_RE = re.compile(rb"^(?:<\?xml[^>]{0,200}\?>)?\s*(?:<!--.{0,2000}?-->\s*)*<(?:xournal|MrWriter)[\s>/]", re.S)
 
 
@@ -181,6 +215,31 @@ def _sniff_excalidraw(data: bytes, names: Optional[List[str]]) -> bool:
     return head[:1] == b"{" and bool(_EXCALIDRAW_TYPE_RE.search(head))
 
 
+# Stylus Labs Write: markers of its document skeleton (Write 3) and of the Write 2 page groups
+_WRITE_MARKERS = re.compile(
+    rb"""\bid\s*=\s*["']write-document["']"""
+    rb"""|\bclass\s*=\s*["'][^"'<>]{0,200}?\bwrite-(?:page|content)\b"""
+    rb"""|\btype\s*=\s*["']text/writeconfig["']"""
+    rb"""|<g\s[^<>]{0,400}?\bid\s*=\s*["']page_\d+["'][^<>]{0,400}?\bxruling\s*=""")
+
+
+def _sniff_styluswrite(data: bytes, names: Optional[List[str]]) -> bool:
+    """XML (gzip- or zlib-compressed or plain) whose first 64 KB carry Write's markers:
+    ``svg#write-document``, ``svg.write-page``, ``g.write-content``, the ``text/writeconfig``
+    block or Write 2's ``<g id="page_1" ... xruling=...>``.  Ordinary SVG files do not match.
+    Compressed input is inflated as leniently as the reader does it (a damaged gzip trailer or
+    a damaged tail still shows the head)."""
+    if names is not None:
+        return False
+    from .styluswrite.container import inflate, is_zlib_header  # a small module, no codec code
+
+    head = data[:65536]
+    if head[:2] == b"\x1f\x8b" or is_zlib_header(head):
+        head = inflate(head, 65536)[0]  # as lenient as the reader: a damaged trailer or tail is fine
+    head = head.lstrip(b"\xef\xbb\xbf \t\r\n")
+    return head[:1] == b"<" and bool(_WRITE_MARKERS.search(head))
+
+
 # OneNote header GUIDs as stored ([MS-ONESTORE] 2.3.1, 2.8.1): file type at offset 0 (.one /
 # .onetoc2), packaging at offset 48 (desktop revision store / OneDrive alternative packaging).
 _ONENOTE_FILE_TYPES = (uuid.UUID("7B5C52E4-D88C-4DA7-AEB1-5378D02996D3").bytes_le,
@@ -189,17 +248,34 @@ _ONENOTE_PACKAGINGS = (uuid.UUID("109ADD3F-911B-49F5-A5D0-1791EDC8AED8").bytes_l
                        uuid.UUID("638DE92F-A6D4-4BC1-9A36-B3FC2511A5B7").bytes_le)
 
 
+def _cab_names(data: bytes, limit: int = 4096) -> List[bytes]:
+    """The file names (lower case) a Microsoft Cabinet's ``CFFILE`` table lists, at most
+    ``limit``; as many as can be read from a damaged one."""
+    if len(data) < 36:
+        return []
+    offset = int.from_bytes(data[16:20], "little")  # coffFiles
+    count = int.from_bytes(data[28:30], "little")  # cFiles
+    names: List[bytes] = []
+    for _ in range(min(count, limit)):
+        start = offset + 16
+        end = data.find(b"\x00", start, start + 1025)
+        if start > len(data) or end < 0:
+            break
+        names.append(bytes(data[start:end]).lower())
+        offset = end + 1
+    return names
+
+
 def _sniff_onenote(data: bytes, names: Optional[List[str]]) -> bool:
     """A section / table of contents by its header GUIDs, a notebook ZIP by its member
-    names, or a ``.onepkg`` (claimed so that the reader can explain how to get a ZIP)."""
+    names, or a ``.onepkg`` package (a cabinet listing OneNote files)."""
     if names is not None:
         return any(n.lower().endswith((".one", ".onetoc2")) for n in names if not n.endswith("/"))
     head = bytes(data[:64])
     if len(head) == 64 and head[:16] in _ONENOTE_FILE_TYPES and head[48:64] in _ONENOTE_PACKAGINGS:
         return True
     if head.startswith(b"MSCF"):
-        cab = bytes(data[:65536]).lower()
-        return b".one\x00" in cab or b".onetoc2\x00" in cab
+        return any(n.endswith((b".one", b".onetoc2")) for n in _cab_names(data))
     return False
 
 
@@ -249,6 +325,13 @@ FORMATS: Dict[str, NoteFormat] = {
             reader="gnnote.excalidraw.reader:read_excalidraw",
             writer="gnnote.excalidraw.writer:write_excalidraw",
         ),
+        # The written files have not been opened in Write yet (docs/styluswrite.md).
+        NoteFormat(
+            id="styluswrite", name="Stylus Labs Write", extension=".svgz",
+            input_extensions=(".svgz", ".svg"), sniff=_sniff_styluswrite,
+            reader="gnnote.styluswrite.reader:read_write_svg",
+            writer="gnnote.styluswrite.writer:write_write_svg",
+        ),
         # Read only: writing .cnote files needs tests in the app first (docs/collanote.md).
         NoteFormat(
             id="collanote", name="CollaNote", extension=".cnote",
@@ -270,11 +353,25 @@ FORMATS: Dict[str, NoteFormat] = {
             input_extensions=(".rmdoc", ".rm"), sniff=_sniff_remarkable,
             reader="gnnote.remarkable.reader:read_remarkable",
         ),
-        # Read only: a section (.one, desktop or OneDrive packaging) or a notebook folder
-        # downloaded from OneDrive as a .zip; see docs/onenote.md.
+        # Read only: no writer has been checked against the app (docs/samsungnotes.md).
+        NoteFormat(
+            id="samsungnotes", name="Samsung Notes", extension=".sdocx",
+            input_extensions=(".sdocx",), sniff=_sniff_samsungnotes,
+            reader="gnnote.samsungnotes.reader:read_sdocx",
+        ),
+        # Read only and experimental: the full-library backup (.ntcbak), whose layout is known
+        # from one MIT project but not yet from a backup made by the app; see docs/noteastic.md.
+        NoteFormat(
+            id="noteastic", name="Noteastic", extension=".ntcbak",
+            input_extensions=(".ntcbak",), sniff=_sniff_noteastic,
+            reader="gnnote.noteastic.reader:read_ntcbak",
+        ),
+        # Read only: a section (.one, desktop or OneDrive packaging), a notebook folder
+        # downloaded from OneDrive as a .zip, or a OneNote for Windows notebook package
+        # (.onepkg); see docs/onenote.md.
         NoteFormat(
             id="onenote", name="OneNote", extension=".one",
-            input_extensions=(".one",), sniff=_sniff_onenote,
+            input_extensions=(".one", ".onepkg"), sniff=_sniff_onenote,
             reader="gnnote.onenote.reader:read_onenote",
         ),
         NoteFormat(

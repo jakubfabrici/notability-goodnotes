@@ -17,6 +17,11 @@ there from a URL naming a pinned commit only when ``GNNOTE_LARGE_SAMPLES=1`` is 
 ``GNNOTE_OFFLINE`` is not); a file is used only when its size and SHA-256 match the pin.
 CI never sets the variable, so those tests skip there.
 
+Small single files that come from somewhere other than a Git repository (:data:`PINNED_FILES`,
+e.g. a dataset on Hugging Face or a web page) are downloaded by default into
+``<samples>/files/`` from a URL naming a fixed revision where the host offers one, and used only
+when their size and SHA-256 match the pin; ``GNNOTE_OFFLINE=1`` disables the download.
+
 Some sample repositories carry no licence (``YTU-Archive``, ``Flashcard`` and the notebook
 in :data:`LARGE_FILES`): their files are test inputs fetched at test time only and are
 never committed to this repository.
@@ -141,6 +146,42 @@ LARGE_FILES: Dict[str, Tuple[str, str, int]] = {
         "66ac18e02f18fddf83015247d41f6919a8de0f84cd6ed51c33551ce0f5061445",
         100_110_925,
     ),
+}
+
+
+# name -> (URL, SHA-256, size in bytes): small single files fetched by default (see the module
+# docstring).  Every entry says where it comes from and under which licence.
+PINNED_FILES: Dict[str, Tuple[str, str, int]] = {
+    # Samsung Notes: the "SDOCX Compatibility Corpus" (Hugging Face dataset
+    # twangodev/sdocx-compatibility @ 0865fd3, CC BY 4.0, by the SDOCX Compatibility Corpus
+    # contributors): notes written by Samsung Notes and the app's own PDF exports of them.
+    **{
+        name: ("https://huggingface.co/datasets/twangodev/sdocx-compatibility/resolve/"
+               "0865fd317776fa4fd60388e93724f789476541d4/" + name, sha256, size)
+        for name, sha256, size in (
+            ("01-basic-formatting.sdocx",
+             "86716d1ccc070d101272ff0760276b8e2d913bfcde88e34d3d64c5c51a1fd21b", 9_105),
+            ("02-shapes-and-dot-calibration.sdocx",
+             "dd6580a0531cf1712ef6526f1b0d51c42adaeb0d11feacca5d23ba562239da82", 128_211),
+            ("03-image-placement.sdocx",
+             "8bfa5a5117ab2d11a28058dee0f8fc61fdeaeb40a454af971e3bfb9a0ab7af9a", 225_464),
+            ("04-marker4-highlighter.sdocx",
+             "8299abbf763e8e3e5af746815d13dfdf45443da27b0eb79192c328571905cdd2", 35_517),
+            ("02-shapes-and-dot-calibration.pdf",
+             "2971d07e8aeb8e63d6322d535d4db91311e54830482506828b67273f22e0e507", 153_665),
+            ("04-marker4-highlighter.pdf",
+             "b951e506c2d5ebd0ae100ac5cf7179e2575e6fcc8dcdea59be822de4341f8a9a", 1_402_787),
+        )
+    },
+    # Stylus Labs Write: pages of the Stylus Labs web site saved by Write 3 (no licence stated;
+    # test input only, never committed).  The server offers no revisions: the SHA-256 pin is
+    # what keeps the expectations stable.
+    "write-site1_page006.svg": (
+        "http://www.styluslabs.com/svg/site1_page006.svg",
+        "f5b2cd47f0c2f0effffa6c8d694b77313569667469a60361401c1ef7b8f54cd0", 251_696),
+    "write-site1_page007.svg": (
+        "http://www.styluslabs.com/svg/site1_page007.svg",
+        "e0a84b86e1f6756ffa7e62694f110ae73a1e5c3c4639646e7577bdfca63da84c", 339_049),
 }
 
 
@@ -425,6 +466,24 @@ class SampleSet:
             pytest.skip("inkterop PencilKit fixtures not available")
         return blobs
 
+    def pinned_file(self, name: str) -> Path:
+        """A :data:`PINNED_FILES` entry, verified against its pin (downloaded unless offline)."""
+        url, sha256, size = PINNED_FILES[name]
+        path = self.root / "files" / name
+        if not path.is_file():
+            if os.environ.get("GNNOTE_OFFLINE"):
+                pytest.skip(f"sample file {name} not available (GNNOTE_OFFLINE is set)")
+            try:
+                fetch_large_file(path, url, sha256, size, timeout=120.0)
+            except Exception as exc:  # noqa: BLE001 - offline or blocked: skip
+                pytest.skip(f"sample file {name} could not be downloaded ({exc})")
+        key = "files/" + name
+        if key not in self._large:
+            self._large[key] = path.stat().st_size == size and _sha256_of(path) == sha256
+        if not self._large[key]:
+            pytest.skip(f"{path} does not match the pinned SHA-256 of {name}")
+        return path
+
     def large_file(self, name: str) -> Path:
         """A :data:`LARGE_FILES` entry, verified against its pin (downloaded on request)."""
         url, sha256, size = LARGE_FILES[name]
@@ -462,6 +521,9 @@ def pytest_report_header(config: pytest.Config) -> List[str]:
     for name in LARGE_FILES:
         if (root / name).is_file():
             lines.append(f"  {name}: present (checked against its pinned SHA-256 when used)")
+    pinned = sum((root / "files" / name).is_file() for name in PINNED_FILES)
+    if pinned:
+        lines.append(f"  files/: {pinned} of {len(PINNED_FILES)} pinned sample files present")
     if lines:
         lines.insert(0, f"reference samples: {root}")
     return lines
