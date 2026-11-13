@@ -154,6 +154,19 @@ shape (straight sides stay straight; ellipses are sampled), only their transluce
 dropped, with a warning.  Every other lossy step adds one human-readable warning, shown in
 the web page, printed by the CLI and returned in the `X-GnNote-Warnings` header of the server.
 
+## Windows apps
+
+Notes also move between the iPad and pen apps on a Windows PC. Most Windows PDF apps keep pen
+strokes as PDF ink annotations (high confidence for Acrobat and Xodo, medium for Drawboard PDF
+and Edge), which gnnote reads and writes (`--pdf-ink annotations`, "As editable annotations" on
+the web page; one width per stroke on the way back). Xournal++, Saber, Excalidraw and Stylus
+Labs Write use files gnnote writes (Rnote through its `.xopp` import and export), Goodnotes for
+Windows imports `.goodnotes`, and OneNote, Samsung Notes, Nebo, Microsoft Journal (through
+OneNote) and Noteastic backups (experimental) convert towards the iPad.
+[docs/windows.md](docs/windows.md) gives the route, menu paths and caveats for each app, and
+`tools/make_windows_testkit.py` builds a test kit for checking the routes on Windows, where
+none has been checked yet.
+
 ## Verification status
 
 * GoodNotes -> Notability ink import is confirmed on the author's iPad with a one-page test.
