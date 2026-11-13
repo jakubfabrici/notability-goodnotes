@@ -41,13 +41,13 @@ jobs:
       # checked out at the commit pinned in tests/conftest.py so the corpus is the same on
       # every run (the cache key above changes with the pins).  A clone that fails (network,
       # repository gone) only makes the tests that need it skip.
-      - name: Clone reference repositories at their pinned commits (test oracles and sample files)
+      - name: Clone reference repositories at their pinned commits and fetch the pinned sample files
         run: |
           python - <<'EOF'
           import shutil, sys
           from pathlib import Path
           sys.path.insert(0, ".")
-          from tests.conftest import LARGE, REPOS, SPARSE, clone_pinned
+          from tests.conftest import LARGE, PINNED_FILES, REPOS, SPARSE, clone_pinned, fetch_large_file
           root = Path("tests/.samples")
           root.mkdir(parents=True, exist_ok=True)
           for name, (url, sha) in REPOS.items():
@@ -63,6 +63,17 @@ jobs:
                   print("cloned:", name, "@", sha[:7])
               except Exception as exc:  # noqa: BLE001
                   shutil.rmtree(target, ignore_errors=True)
+                  print("skipped:", name, exc)
+          # single pinned files (PINNED_FILES), kept only when their size and SHA-256 match
+          for name, (url, sha256, size) in PINNED_FILES.items():
+              target = root / "files" / name
+              if target.is_file():
+                  print("present:", name)
+                  continue
+              try:
+                  fetch_large_file(target, url, sha256, size, timeout=120.0)
+                  print("downloaded:", name)
+              except Exception as exc:  # noqa: BLE001
                   print("skipped:", name, exc)
           EOF
 
