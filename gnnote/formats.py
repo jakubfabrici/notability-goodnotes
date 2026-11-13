@@ -215,6 +215,31 @@ def _sniff_excalidraw(data: bytes, names: Optional[List[str]]) -> bool:
     return head[:1] == b"{" and bool(_EXCALIDRAW_TYPE_RE.search(head))
 
 
+# Stylus Labs Write: markers of its document skeleton (Write 3) and of the Write 2 page groups
+_WRITE_MARKERS = re.compile(
+    rb"""\bid\s*=\s*["']write-document["']"""
+    rb"""|\bclass\s*=\s*["'][^"'<>]{0,200}?\bwrite-(?:page|content)\b"""
+    rb"""|\btype\s*=\s*["']text/writeconfig["']"""
+    rb"""|<g\s[^<>]{0,400}?\bid\s*=\s*["']page_\d+["'][^<>]{0,400}?\bxruling\s*=""")
+
+
+def _sniff_styluswrite(data: bytes, names: Optional[List[str]]) -> bool:
+    """XML (gzip- or zlib-compressed or plain) whose first 64 KB carry Write's markers:
+    ``svg#write-document``, ``svg.write-page``, ``g.write-content``, the ``text/writeconfig``
+    block or Write 2's ``<g id="page_1" ... xruling=...>``.  Ordinary SVG files do not match.
+    Compressed input is inflated as leniently as the reader does it (a damaged gzip trailer or
+    a damaged tail still shows the head)."""
+    if names is not None:
+        return False
+    from .styluswrite.container import inflate, is_zlib_header  # a small module, no codec code
+
+    head = data[:65536]
+    if head[:2] == b"\x1f\x8b" or is_zlib_header(head):
+        head = inflate(head, 65536)[0]  # as lenient as the reader: a damaged trailer or tail is fine
+    head = head.lstrip(b"\xef\xbb\xbf \t\r\n")
+    return head[:1] == b"<" and bool(_WRITE_MARKERS.search(head))
+
+
 # OneNote header GUIDs as stored ([MS-ONESTORE] 2.3.1, 2.8.1): file type at offset 0 (.one /
 # .onetoc2), packaging at offset 48 (desktop revision store / OneDrive alternative packaging).
 _ONENOTE_FILE_TYPES = (uuid.UUID("7B5C52E4-D88C-4DA7-AEB1-5378D02996D3").bytes_le,
@@ -299,6 +324,13 @@ FORMATS: Dict[str, NoteFormat] = {
             input_extensions=(".excalidraw",), sniff=_sniff_excalidraw,
             reader="gnnote.excalidraw.reader:read_excalidraw",
             writer="gnnote.excalidraw.writer:write_excalidraw",
+        ),
+        # The written files have not been opened in Write yet (docs/styluswrite.md).
+        NoteFormat(
+            id="styluswrite", name="Stylus Labs Write", extension=".svgz",
+            input_extensions=(".svgz", ".svg"), sniff=_sniff_styluswrite,
+            reader="gnnote.styluswrite.reader:read_write_svg",
+            writer="gnnote.styluswrite.writer:write_write_svg",
         ),
         # Read only: writing .cnote files needs tests in the app first (docs/collanote.md).
         NoteFormat(

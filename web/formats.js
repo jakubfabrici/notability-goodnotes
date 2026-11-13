@@ -71,6 +71,18 @@ export const FORMATS = [
     "defaultTarget": "notability"
   },
   {
+    "id": "styluswrite",
+    "name": "Stylus Labs Write",
+    "extension": ".svgz",
+    "inputExtensions": [
+      ".svgz",
+      ".svg"
+    ],
+    "readable": true,
+    "writable": true,
+    "defaultTarget": "notability"
+  },
+  {
     "id": "collanote",
     "name": "CollaNote",
     "extension": ".cnote",

@@ -77,6 +77,8 @@ gnnote/
   xournalpp/             Xournal++ .xopp / .xoj: reader.read_xopp, writer.write_xopp (docs/xournalpp.md)
   saber/                 Saber .sba / .sbn2 / .sbn: bson, reader.read_saber, writer.write_saber (docs/saber.md)
   excalidraw/            Excalidraw .excalidraw: reader.read_excalidraw, writer.write_excalidraw (docs/excalidraw.md)
+  styluswrite/           Stylus Labs Write .svgz / .svg: svgpath (path data, transforms), reader.read_write_svg,
+                         writer.write_write_svg (docs/styluswrite.md)
   onenote/               read only: common.py (bounded bytes, property sets), native.py (desktop
                          revision store), package.py (OneDrive packaging), schema.py, ink.py,
                          reader.py read_onenote(data: bytes) -> Document  (docs/onenote.md)
@@ -141,6 +143,8 @@ gnnote.flexcil.reader.list_flexcil_documents(data: bytes) -> List[FlexcilEntry]
 gnnote.remarkable.reader.read_remarkable(data: bytes) -> Document     # read only
 gnnote.samsungnotes.reader.read_sdocx(data: bytes) -> Document        # read only
 gnnote.onenote.reader.read_onenote(data: bytes) -> Document   # .one (both packagings) or a notebook .zip
+gnnote.styluswrite.reader.read_write_svg(data: bytes) -> Document              # Write .svgz / .svg / .htm
+gnnote.styluswrite.writer.write_write_svg(doc: Document, options: Options) -> bytes   # .svgz; docs/styluswrite.md
 ```
 
 Every format is one entry of `gnnote/formats.py` (`FORMATS`): id, name, extensions, a content
