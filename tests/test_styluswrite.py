@@ -1907,6 +1907,7 @@ def test_sniffers_keep_to_their_own_samples(samples) -> None:
     """The Write sniffer claims only Write files among all sample files, and no other format's
     sniffer claims a Write file."""
     write = formats.get("styluswrite")
+    known = _write_samples(samples)  # skips when the Write samples are not available
     expected = {"write-site1_page006.svg", "write-site1_page007.svg", "write-mini.svg"}
     claimed = set()
     for path in _sample_files(samples.root):
@@ -1915,7 +1916,7 @@ def test_sniffers_keep_to_their_own_samples(samples) -> None:
         if write.sniff(head, None):
             claimed.add(path.name)
     assert claimed == expected
-    for name, data in _write_samples(samples) + [("written.svgz", write_write_svg(full_document()))]:
+    for name, data in known + [("written.svgz", write_write_svg(full_document()))]:
         names = formats.sniff_zip_names(data)
         for fmt in formats.readable():
             if fmt.id != "styluswrite":
