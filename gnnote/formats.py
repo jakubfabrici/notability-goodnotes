@@ -139,6 +139,22 @@ def _sniff_remarkable(data: bytes, names: Optional[List[str]]) -> bool:
         any(n.endswith(".metadata") for n in top) or any(n.endswith(".rm") for n in names))
 
 
+def _sniff_samsungnotes(data: bytes, names: Optional[List[str]]) -> bool:
+    """Samsung Notes: ``note.note`` plus ``pageIdInfo.dat`` or ``end_tag.bin``, at the top of
+    the archive or under exactly one folder (a zipped note folder of the Windows app)."""
+    if not names:
+        return False
+    files = set(names)
+    for name in names:
+        if name.rsplit("/", 1)[-1] != "note.note":
+            continue
+        prefix = name[:-len("note.note")]
+        if prefix.count("/") <= 1 and not prefix.startswith("__MACOSX/") and \
+                (prefix + "pageIdInfo.dat" in files or prefix + "end_tag.bin" in files):
+            return True
+    return False
+
+
 def _sniff_noteastic(data: bytes, names: Optional[List[str]]) -> bool:
     """Noteastic: a ``.ntcbak`` backup (a ZIP holding ``noteastic.db``, at the top or one folder
     down, any case) or a bare SQLite database whose schema names Noteastic's tables."""
@@ -287,6 +303,12 @@ FORMATS: Dict[str, NoteFormat] = {
             id="remarkable", name="reMarkable", extension=".rmdoc",
             input_extensions=(".rmdoc", ".rm"), sniff=_sniff_remarkable,
             reader="gnnote.remarkable.reader:read_remarkable",
+        ),
+        # Read only: no writer has been checked against the app (docs/samsungnotes.md).
+        NoteFormat(
+            id="samsungnotes", name="Samsung Notes", extension=".sdocx",
+            input_extensions=(".sdocx",), sniff=_sniff_samsungnotes,
+            reader="gnnote.samsungnotes.reader:read_sdocx",
         ),
         # Read only and experimental: the full-library backup (.ntcbak), whose layout is known
         # from one MIT project but not yet from a backup made by the app; see docs/noteastic.md.

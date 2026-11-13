@@ -117,6 +117,17 @@ export const FORMATS = [
     "defaultTarget": "notability"
   },
   {
+    "id": "samsungnotes",
+    "name": "Samsung Notes",
+    "extension": ".sdocx",
+    "inputExtensions": [
+      ".sdocx"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
+  },
+  {
     "id": "noteastic",
     "name": "Noteastic",
     "extension": ".ntcbak",
