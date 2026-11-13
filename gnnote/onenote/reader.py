@@ -1,11 +1,12 @@
 """Microsoft OneNote -> :class:`gnnote.model.Document` (tolerant reader).
 
 Input: one section file (``.one``, in either packaging: the desktop revision store or the
-OneDrive "alternative packaging") or a ZIP of a notebook folder as onedrive.com and OneNote
+OneDrive "alternative packaging"), a ZIP of a notebook folder as onedrive.com and OneNote
 for the web download it (``.one`` sections, ``.onetoc2`` tables of contents, section groups
-as sub-folders, a ``OneNote_RecycleBin`` folder).  ``.onepkg`` packages (CAB archives) are
-refused with a :class:`ValueError` that explains how to get a ZIP instead; so are
-password-protected sections, whose content is never decoded.
+as sub-folders, a ``OneNote_RecycleBin`` folder), or a ``.onepkg`` notebook package as
+OneNote for Windows exports it (a Microsoft Cabinet of the same files, unpacked by
+:mod:`.cab` and :mod:`.lzx`; from there it takes the ZIP's path).  Password-protected
+sections are refused with a :class:`ValueError`; their content is never decoded.
 
 Content model ([MS-ONE]): section -> page series -> one object space per page -> page
 manifest -> page.  A page holds outlines (typed text, pictures, tables), pictures, embedded
@@ -34,10 +35,11 @@ import posixpath
 import struct
 import zipfile
 from collections import Counter
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..model import Document, Image, Page, Stroke, TextBox, TextRun
 from . import schema as S
+from .cab import CabError, Cabinet, CabMember, is_cabinet
 from .common import (
     FILE_TYPE_ONE, FILE_TYPE_ONETOC2, FORMAT_NATIVE, FORMAT_PACKAGE, MAX_WORK, MIN_WORK, WORK_PER_BYTE, Budget,
     Encrypted, Obj, ObjectSpace, OneNoteError, Store, TooLarge, p_bool, p_bytes, p_f32, p_ref, p_refs, p_sets,
@@ -47,7 +49,7 @@ from .ink import InkBudget, InkTransform, ink_bounds, ink_data_strokes
 from .native import NativeStore
 from .package import PackageStore
 
-__all__ = ["read_onenote", "open_store", "is_onenote", "ONEPKG_MESSAGE", "ENCRYPTED_MESSAGE"]
+__all__ = ["read_onenote", "open_store", "is_onenote", "ENCRYPTED_MESSAGE"]
 
 DEFAULT_PAGE_WIDTH = 754.0  # 20.944 half-inches: OneNote's usual page width
 DEFAULT_PAGE_HEIGHT = 783.0  # 21.75 half-inches
@@ -69,8 +71,8 @@ MAX_SECTIONS = 1_000
 MAX_IMAGE_BYTES = 512 * 1024 * 1024  # picture bytes one document may hold
 MAX_ITEMS = 200_000  # pictures, text boxes and text runs one document may hold
 MAX_TEXT_BYTES = 64 * 1024 * 1024  # bytes of typed text one document may hold
-MAX_MEMBER_BYTES = 256 * 1024 * 1024  # declared size above which a ZIP member is skipped
-MAX_TOTAL_BYTES = 1024 * 1024 * 1024  # bytes one notebook ZIP may inflate to in total
+MAX_MEMBER_BYTES = 256 * 1024 * 1024  # declared size above which a ZIP or package member is skipped
+MAX_TOTAL_BYTES = 1024 * 1024 * 1024  # bytes one notebook ZIP or package may unpack to in total
 RECYCLE_BIN = "onenote_recyclebin"
 DELETED_PAGES = "onenote_deletedpages.one"
 
@@ -80,10 +82,6 @@ TOC_FILE_NAME = 0x1C001D6B
 TOC_ORDERING_ID = 0x14001CB9
 TOC_FILE_IDENTITY = 0x1C001D94
 
-ONEPKG_MESSAGE = (
-    "This is a OneNote package (.onepkg), which gnnote cannot read. Download the notebook from "
-    "OneDrive instead: open onedrive.com, select the notebook's folder and choose Download; "
-    "convert the .zip you get (or one .one section from it).")
 ENCRYPTED_MESSAGE = (
     "This OneNote section is password protected, so its pages cannot be read. Remove the "
     "password in OneNote (or copy the pages into an unprotected section), download it again "
@@ -103,14 +101,6 @@ def is_onenote(data: bytes) -> bool:
     """``True`` for a ``.one`` / ``.onetoc2`` file in either packaging (header GUIDs)."""
     return (len(data) >= 64 and bytes(data[0:16]) in (FILE_TYPE_ONE, FILE_TYPE_ONETOC2)
             and bytes(data[48:64]) in (FORMAT_NATIVE, FORMAT_PACKAGE))
-
-
-def is_onepkg(data: bytes) -> bool:
-    """A CAB archive (``MSCF``) that names OneNote files: a ``.onepkg`` notebook package."""
-    if not data.startswith(b"MSCF"):
-        return False
-    head = bytes(data[:65536]).lower()
-    return b".one\x00" in head or b".onetoc2\x00" in head
 
 
 def open_store(data: bytes, work: Optional[Budget] = None) -> Store:
@@ -1004,31 +994,65 @@ def _read_pages(ctx: _Context, store: Store, root: ObjectSpace, section: Obj, pa
 
 
 # ----------------------------------------------------------------------------------
-# Notebook ZIPs
+# Notebook ZIPs and packages
 # ----------------------------------------------------------------------------------
 
 
-class _Zip:
+def _member_name(raw: str) -> Optional[str]:
+    """A member's ``/``-separated name, or None for folders, parent references and macOS litter."""
+    name = raw.replace("\\", "/").lstrip("/")
+    if not name or name.endswith("/") or any(p in ("..", "") for p in name.split("/")[:-1]):
+        return None
+    if name.split("/")[0] == "__MACOSX" or posixpath.basename(name).startswith("._"):
+        return None
+    return name
+
+
+class _Archive:
+    """The files of a notebook ZIP or package, read within the size budgets.
+
+    ``files`` maps member names to the archive's own entries; :meth:`read` returns ``None``
+    (noted for :meth:`report`) for a member that is too large or cannot be unpacked.
+    """
+
+    what = "archive"  # how messages name the container
+
+    def __init__(self) -> None:
+        self.files: Dict[str, Any] = {}
+        self.budget = MAX_TOTAL_BYTES  # bytes all members read may add up to
+        self.oversized: List[str] = []  # members refused by the size guards
+        self.unreadable: List[str] = []  # members that could not be unpacked
+        self.first_error = ""  # why the first unreadable member could not be unpacked
+
+    def read(self, name: str) -> Optional[bytes]:
+        raise NotImplementedError
+
+    def report(self, ctx: _Context) -> None:
+        mb = 1024 * 1024
+        if self.oversized:
+            ctx.warn(f"File(s) too large once unpacked (over {MAX_MEMBER_BYTES // mb} MB each or "
+                     f"{MAX_TOTAL_BYTES // mb} MB in all) were skipped: {_listing(self.oversized)}")
+        if self.unreadable:
+            reason = f" ({self.first_error})" if self.first_error else ""
+            ctx.warn(f"File(s) that could not be unpacked were skipped{reason}: {_listing(self.unreadable)}")
+
+
+class _Zip(_Archive):
+    what = "ZIP"
+
     def __init__(self, data: bytes):
+        super().__init__()
         try:
             self.zip = zipfile.ZipFile(io.BytesIO(data))
             infos = self.zip.infolist()
         except (zipfile.BadZipFile, NotImplementedError, OSError, ValueError, RuntimeError, EOFError) as exc:
             raise OneNoteError(f"not a OneNote notebook: not a readable ZIP archive ({exc})") from exc
-        self.budget = MAX_TOTAL_BYTES
-        self.oversized: List[str] = []  # members refused by the size guards
-        self.unreadable: List[str] = []  # members zipfile could not unpack
-        self.files: Dict[str, zipfile.ZipInfo] = {}
         for info in infos:
-            name = info.filename.replace("\\", "/").lstrip("/")
-            if info.is_dir() or name.endswith("/") or any(p in ("..", "") for p in name.split("/")[:-1]):
-                continue
-            if name.split("/")[0] == "__MACOSX" or posixpath.basename(name).startswith("._"):
-                continue
-            self.files[name] = info
+            name = _member_name(info.filename)
+            if name is not None and not info.is_dir():
+                self.files[name] = info
 
     def read(self, name: str) -> Optional[bytes]:
-        """A member's bytes, or None (noted for :meth:`report`) when it is too large or broken."""
         info = self.files[name]
         if info.file_size > MAX_MEMBER_BYTES or info.file_size > self.budget:
             self.oversized.append(posixpath.basename(name))
@@ -1040,13 +1064,82 @@ class _Zip:
             self.unreadable.append(posixpath.basename(name))
             return None
 
+
+class _Package(_Archive):
+    """A ``.onepkg`` (a Microsoft Cabinet).  A cabinet expands whole folders (usually one
+    for the package), so a folder is expanded when its first member is read and kept until
+    its last member was read; the folders expanded may add up to :data:`MAX_TOTAL_BYTES`,
+    and so may the members read."""
+
+    what = "package"
+
+    def __init__(self, data: bytes):
+        super().__init__()
+        try:
+            self.cab = Cabinet(data)
+        except CabError as exc:
+            raise OneNoteError(f"not a readable OneNote package: {exc}") from exc
+        self.expand_budget = MAX_TOTAL_BYTES
+        self.failed: Dict[int, str] = {}  # folder -> why it cannot be expanded ("": too large)
+        for member in self.cab.members:
+            name = _member_name(member.name)
+            if name is not None:
+                self.files[name] = member
+        self.pending: Dict[int, int] = {}  # folder -> members not read yet
+        for member in self.files.values():
+            self.pending[member.folder] = self.pending.get(member.folder, 0) + 1
+        self.done: Set[str] = set()  # members read (or refused)
+
+    def read(self, name: str) -> Optional[bytes]:
+        member: CabMember = self.files[name]
+        try:
+            return self._read(member, posixpath.basename(name))
+        finally:
+            if name not in self.done:
+                self.done.add(name)
+                self.pending[member.folder] -= 1
+                if not self.pending[member.folder]:
+                    self.cab.release(member.folder)  # nothing else reads its data
+
+    def _read(self, member: CabMember, label: str) -> Optional[bytes]:
+        if member.size > MAX_MEMBER_BYTES or member.size > self.budget:
+            self.oversized.append(label)
+            return None
+        folder = member.folder
+        if folder not in self.failed and not self.cab.is_expanded(folder):
+            try:
+                size = self.cab.folder_size(folder)
+                if size > self.expand_budget:
+                    self.failed[folder] = ""  # reported as too large
+                else:
+                    self.expand_budget -= size
+                    self.cab.expand(folder)
+            except CabError as exc:
+                self.failed[folder] = str(exc)
+            except MemoryError:  # a memory-capped runtime (a browser worker) cannot hold it
+                self.failed[folder] = ""
+        if folder in self.failed:
+            reason = self.failed[folder]
+            (self.unreadable if reason else self.oversized).append(label)
+            self.first_error = self.first_error or reason
+            return None
+        try:
+            data = self.cab.read(member)
+        except CabError as exc:
+            self.unreadable.append(label)
+            self.first_error = self.first_error or str(exc)
+            return None
+        except MemoryError:
+            self.oversized.append(label)
+            return None
+        self.budget -= member.size
+        return data
+
     def report(self, ctx: _Context) -> None:
-        mb = 1024 * 1024
-        if self.oversized:
-            ctx.warn(f"File(s) too large once unpacked (over {MAX_MEMBER_BYTES // mb} MB each or "
-                     f"{MAX_TOTAL_BYTES // mb} MB in all) were skipped: {_listing(self.oversized)}")
-        if self.unreadable:
-            ctx.warn(f"File(s) that could not be unpacked were skipped: {_listing(self.unreadable)}")
+        super().report(ctx)
+        if self.cab.misplaced:
+            ctx.warn(f"{self.cab.misplaced} file(s) of the package name a folder the package does not have "
+                     "and were skipped")
 
 
 def _listing(names: Sequence[str], limit: int = 10) -> str:
@@ -1084,7 +1177,7 @@ def _toc_entries(ctx: _Context, data: bytes) -> List[Tuple[int, int, str, Option
     return out
 
 
-def _ordered_sections(ctx: _Context, archive: _Zip, sections: List[str], tocs: List[str]) -> List[str]:
+def _ordered_sections(ctx: _Context, archive: _Archive, sections: List[str], tocs: List[str]) -> List[str]:
     """Sections in notebook order: every folder by its ``.onetoc2`` where readable, else by name."""
     by_folder: Dict[str, List[str]] = {}
     for name in sections:
@@ -1141,18 +1234,20 @@ def _ordered_sections(ctx: _Context, archive: _Zip, sections: List[str], tocs: L
     return result
 
 
-def _read_zip(ctx: _Context, data: bytes) -> Tuple[str, List[Page]]:
-    archive = _Zip(data)
+def _read_notebook(ctx: _Context, archive: _Archive) -> Tuple[str, List[Page]]:
+    """Every section of a notebook ZIP or package, in notebook order."""
+    what = archive.what
     names = list(archive.files)
     sections = [n for n in names if n.lower().endswith(".one") and not _in_recycle_bin(n)]
     tocs = [n for n in names if n.lower().endswith(".onetoc2") and not _in_recycle_bin(n)]
     skipped_bin = [n for n in names if n.lower().endswith(".one") and _in_recycle_bin(n)]
     if not sections:
         if skipped_bin:
-            raise OneNoteError("this notebook ZIP holds only OneNote's recycle bin, no sections to convert")
+            raise OneNoteError(f"this notebook {what} holds only OneNote's recycle bin, no sections to convert")
         if tocs:
-            raise OneNoteError("this notebook ZIP holds a table of contents (.onetoc2) but no sections (.one files)")
-        raise OneNoteError("not a OneNote notebook: the ZIP holds no .one section files")
+            raise OneNoteError(f"this notebook {what} holds a table of contents (.onetoc2) but no sections "
+                               "(.one files)")
+        raise OneNoteError(f"not a OneNote notebook: the {what} holds no .one section files")
     if len(sections) > MAX_SECTIONS:
         ctx.warn(f"The notebook has {len(sections)} sections; only the first {MAX_SECTIONS} were read")
         sections = sorted(sections, key=str.lower)[:MAX_SECTIONS]
@@ -1161,7 +1256,7 @@ def _read_zip(ctx: _Context, data: bytes) -> Tuple[str, List[Page]]:
     read_names: List[str] = []
     encrypted: List[str] = []
     failed: List[str] = []  # damaged sections
-    unpacked = 0  # sections the ZIP itself could not give (reported by archive.report)
+    unpacked = 0  # sections the archive itself could not give (reported by archive.report)
     first_error = ""
     for i, name in enumerate(ordered):
         if ctx.work.exhausted:  # the budget ran out in an earlier section
@@ -1198,6 +1293,11 @@ def _read_zip(ctx: _Context, data: bytes) -> Tuple[str, List[Page]]:
             raise OneNoteError(ENCRYPTED_MESSAGE)
         if ctx.work.exhausted:
             raise OneNoteError("the notebook is too large or complex to read")
+        if unpacked and not failed and not encrypted:
+            if archive.first_error:
+                raise OneNoteError(f"none of the notebook's sections could be unpacked ({archive.first_error})")
+            if not archive.unreadable:
+                raise OneNoteError("none of the notebook's sections could be read (too large once unpacked)")
         reason = f" ({first_error})" if len(failed) == 1 and not encrypted and not unpacked else ""
         raise OneNoteError("none of the notebook's sections could be read" + reason)
     if len(read_names) > 1:
@@ -1210,7 +1310,7 @@ def _read_zip(ctx: _Context, data: bytes) -> Tuple[str, List[Page]]:
     elif len(read_names) == 1:
         title = read_names[0]
     else:
-        title = ""  # the notebook's name is the ZIP's file name, which the caller knows
+        title = ""  # the notebook's name is the ZIP's or package's file name, which the caller knows
     return title, pages
 
 
@@ -1220,11 +1320,12 @@ def _read_zip(ctx: _Context, data: bytes) -> Tuple[str, List[Page]]:
 
 
 def read_onenote(data: bytes) -> Document:
-    """Read a OneNote section (``.one``, either packaging) or a notebook ZIP.
+    """Read a OneNote section (``.one``, either packaging), a notebook ZIP or a ``.onepkg``.
 
-    Raises :class:`ValueError` when the data is not OneNote (or a ZIP without sections), is
-    a ``.onepkg`` package or a ``.onetoc2`` table of contents, is password protected, or is
-    damaged beyond reading.  Everything else that is lost on the way is described on
+    Raises :class:`ValueError` when the data is not OneNote (or a ZIP or package without
+    sections), is a ``.onetoc2`` table of contents, is password protected, or is damaged
+    beyond reading (a package that is part of a multi-cabinet set or uses Quantum
+    compression included).  Everything else that is lost on the way is described on
     ``Document.warnings``.  ``Document.title`` is the section's (or notebook folder's) name
     when the file records one and empty otherwise: a desktop section is named by its file
     name, which :func:`gnnote.convert.convert` then uses.
@@ -1235,10 +1336,10 @@ def read_onenote(data: bytes) -> Document:
     doc = Document(title="", source_format="onenote")
     ctx = _Context(doc)
     try:
-        if is_onepkg(data):
-            raise OneNoteError(ONEPKG_MESSAGE)
-        if data.startswith(b"PK"):
-            title, pages = _read_zip(ctx, data)
+        if is_cabinet(data):
+            title, pages = _read_notebook(ctx, _Package(data))
+        elif data.startswith(b"PK"):
+            title, pages = _read_notebook(ctx, _Zip(data))
         elif is_onenote(data):
             try:
                 section_title, pages = _read_section(ctx, data)

@@ -29,7 +29,6 @@ from gnnote.model import Document
 from gnnote.notability.reader import read_note
 from gnnote.onenote import read_onenote
 from gnnote.onenote.ink import decode_path
-from gnnote.onenote.reader import ONEPKG_MESSAGE
 from gnnote.server import build_options
 
 FORMAT_NATIVE = bytes.fromhex("3fdd9a101b91f549a5d01791edc8aed8")
@@ -356,18 +355,16 @@ def test_table_of_contents_alone_is_refused(samples) -> None:
         read_onenote(toc.read_bytes())
 
 
-def test_onepkg_is_refused_with_onedrive_instructions(samples) -> None:
-    synthetic = b"MSCF" + bytes(40) + b"Notebook/Open Notebook.onetoc2\x00Notebook/Math.one\x00"
-    with pytest.raises(ValueError, match="onedrive.com"):
-        read_onenote(synthetic)
-    assert detect_format("Notebook.onepkg", synthetic) == "onenote"
-    with pytest.raises(ValueError, match=r"\.onepkg"):
-        convert(synthetic, "Notebook.onepkg", Options(target="notability"))
-    real = [p for p in samples.onenote_files("*.onepkg")] if _has_onepkg(samples) else []
-    for path in real:  # makecab-made fixtures of the importer projects
-        with pytest.raises(ValueError, match="onedrive.com"):
-            read_onenote(path.read_bytes())
-    assert "OneDrive" in ONEPKG_MESSAGE
+def test_onepkg_packages_are_read(samples) -> None:
+    """.onepkg notebook packages (Microsoft Cabinets) are unpacked and read like a notebook
+    ZIP; tests/test_onepkg.py covers them in depth."""
+    packages = [p for p in samples.onenote_files("*.onepkg")] if _has_onepkg(samples) else []
+    for path in packages:  # makecab-made fixtures of the importer projects
+        data = path.read_bytes()
+        assert detect_format(path.name, data) == "onenote"
+        assert read_onenote(data).pages, path.name
+    with pytest.raises(ValueError, match="the package holds no .one section files"):
+        read_onenote(b"MSCF" + bytes(40) + b"Notebook/Open Notebook.onetoc2\x00Notebook/Math.one\x00")
 
 
 def _has_onepkg(samples) -> bool:
@@ -381,7 +378,7 @@ def _has_onepkg(samples) -> bool:
     (b"", "not a OneNote file"),
     (b"hello world" * 100, "not a OneNote file"),
     (b"version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n", "not a OneNote file"),
-    (b"MSCF" + bytes(100), "not a OneNote file"),  # a CAB that names no OneNote file
+    (b"MSCF" + bytes(100), "the package holds no .one section files"),  # a CAB that names no OneNote file
 ])
 def test_not_onenote_is_a_value_error(data: bytes, message: str) -> None:
     with pytest.raises(ValueError, match=message):

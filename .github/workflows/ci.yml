@@ -78,6 +78,32 @@ jobs:
           GNNOTE_OFFLINE: "1"
         run: python -m pytest -q
 
+  # requires-python is >=3.11, and Debian 12 ships 3.11.2, while setup-python's "3.11" above is
+  # the latest 3.11.x: CPython 3.11.0 to 3.11.4 have regular expression bugs (possessive
+  # quantifiers, atomic groups) that only an early 3.11 shows.  The sample repositories are not
+  # fetched here; the tests that need them skip.
+  oldest-python:
+    name: pytest (Debian 12 system Python 3.11.2, no samples)
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - name: Install Python and git
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3 python3-venv git ca-certificates
+
+      - uses: actions/checkout@v4
+
+      - name: Install gnnote with test extras
+        run: |
+          python3 -m venv /opt/venv
+          /opt/venv/bin/python -m pip install -e ".[test]"
+
+      - name: Run tests
+        env:
+          GNNOTE_OFFLINE: "1"
+        run: /opt/venv/bin/python -m pytest -q
+
   e2e:
     name: browser end-to-end (Pyodide)
     runs-on: ubuntu-latest

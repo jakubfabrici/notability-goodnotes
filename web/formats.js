@@ -143,7 +143,8 @@ export const FORMATS = [
     "name": "OneNote",
     "extension": ".one",
     "inputExtensions": [
-      ".one"
+      ".one",
+      ".onepkg"
     ],
     "readable": true,
     "writable": false,
