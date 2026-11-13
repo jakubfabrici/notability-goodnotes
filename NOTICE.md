@@ -174,10 +174,9 @@ implementation written from the byte-level research notes in `docs/`.
   - the stroke rendering model (width = pen size x clamp(pressure, 0.4, 0.7), a constant 0.45
     x pen size for pens without pressure, the highlighter pen families).
   The MIT permission notice quoted for inkterop above applies to these adapted parts in the
-  same way. Provenance: sdocx2pdf does not state how its author learned the format, and its
-  source comments name functions and libraries of Samsung's own app. Whether its facts are
-  acceptable under gnnote's clean-room policy is recorded as an open maintainer decision in
-  `docs/samsungnotes.md` section 1. inkterop's reader also states that it learned its facts
+  same way. Provenance: sdocx2pdf does not state how its author learned the format, and its source
+  comments name functions and libraries of Samsung's own app; the maintainer accepted it as a
+  fact source (`docs/samsungnotes.md` section 1). inkterop's reader also states that it learned its facts
   from sdocx2pdf. Format facts were also checked against inkterop's `docs/formats/sdocx.md`
   (CC BY 4.0, Copyright (c) 2026 Caleb (cable729),
   https://creativecommons.org/licenses/by/4.0/); no text from it is reused. No code from

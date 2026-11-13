@@ -44,17 +44,17 @@ Not used: `twangodev/sdocx` (GPL-3.0; neither its code nor its repository sample
 `device-mods/vendor/` (GPL-3.0). inkterop's reader runs in the tests only as a separate-process
 oracle (`tests/test_samsungnotes.py`).
 
-**Provenance of sdocx2pdf: a maintainer decision is open.** gnnote's research named sdocx2pdf
-as the fact reference for this format. Its README does not say how its author learned the
-format, but its source comments name functions and libraries of Samsung's own app (for
-example `SPen::ObjectStrokeBinaryHandler::m_ApplyBinary_FlexibleData`, `_document.dll`,
-`libSpen_worddoc.dll`, and "the JVM code"), so its author evidently studied the app's
-binaries. inkterop's reader in turn says it learned its facts from sdocx2pdf. gnnote's
+**Provenance of sdocx2pdf: accepted as a fact source (maintainer decision, 2026-11-13).**
+gnnote's research named sdocx2pdf as the fact reference for this format. Its README does not
+say how its author learned the format, but its source comments name functions and libraries of
+Samsung's own app (for example `SPen::ObjectStrokeBinaryHandler::m_ApplyBinary_FlexibleData`,
+`_document.dll`, `libSpen_worddoc.dll`, and "the JVM code"), so its author evidently studied the
+app's binaries. inkterop's reader in turn says it learned its facts from sdocx2pdf. gnnote's
 clean-room rule excludes code and facts derived from decompiling an app (which is why bxff is
-not used), and the research left the comparable MIT project `windows-journal-re` to a
-maintainer decision. The same decision is needed here before this reader is released: either
-accept sdocx2pdf as a fact source, or keep only what the public samples confirm. To make that decision easy, the
-markers in sections 2 to 6 say which facts the samples confirm (**[verified]**: the object
+not used), so the question was put to the maintainer before release. The decision: sdocx2pdf
+is an MIT-licensed project that publishes its code and states no decompilation, and the parts
+adapted from it are credited in `NOTICE.md`, so it stays as a fact source. If that ever has to
+be revisited, the markers in sections 2 to 6 say which facts the samples confirm (**[verified]**: the object
 base; strokes with optional fields 1, 2, 3, 7, 8, 10 and 13 and both event encodings; shapes,
 their paths and the line object of sample 02; pictures with crop and uncropped rectangle and
 the picture fill of sample 03; the rich text with spans, paragraph attributes and objects in
