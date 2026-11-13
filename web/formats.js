@@ -117,6 +117,17 @@ export const FORMATS = [
     "defaultTarget": "notability"
   },
   {
+    "id": "noteastic",
+    "name": "Noteastic",
+    "extension": ".ntcbak",
+    "inputExtensions": [
+      ".ntcbak"
+    ],
+    "readable": true,
+    "writable": false,
+    "defaultTarget": "notability"
+  },
+  {
     "id": "onenote",
     "name": "OneNote",
     "extension": ".one",

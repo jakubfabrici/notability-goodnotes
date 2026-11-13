@@ -78,6 +78,8 @@ gnnote/
   onenote/               read only: common.py (bounded bytes, property sets), native.py (desktop
                          revision store), package.py (OneDrive packaging), schema.py, ink.py,
                          reader.py read_onenote(data: bytes) -> Document  (docs/onenote.md)
+  sqliteutil.py          bounded read-only SQLite from bytes (deserialize, real tables only, quick_check, named columns)
+  noteastic/reader.py    read_ntcbak(data: bytes) -> Document          (Noteastic .ntcbak, read only, experimental)
   formats.py             the format registry: id, name, extensions, content sniffer, reader / writer paths
   convert.py             detect_format, Options, ConvertResult, convert()
   cli.py                 python -m gnnote
@@ -417,6 +419,9 @@ Their byte layouts, mappings and open questions are in their own notes:
   backgrounds, text boxes, images; one document per backup).
 * reMarkable `.rmdoc` / `.rm`: `docs/remarkable.md` (v6 scenes ported from rmscene, stored
   rendered widths, 226-dpi pages or PDF pages, highlights, approximate typed-text anchors).
+* Noteastic `.ntcbak` (experimental): `docs/noteastic.md` (a ZIP holding the SQLite library
+  `noteastic.db`, read through `gnnote/sqliteutil.py`; schema from one MIT project, not yet
+  checked against a backup made by the app, so every document carries a warning saying so).
 
 ## 5. Web UI (`web/`)
 

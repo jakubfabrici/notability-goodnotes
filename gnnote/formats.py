@@ -139,6 +139,24 @@ def _sniff_remarkable(data: bytes, names: Optional[List[str]]) -> bool:
         any(n.endswith(".metadata") for n in top) or any(n.endswith(".rm") for n in names))
 
 
+def _sniff_noteastic(data: bytes, names: Optional[List[str]]) -> bool:
+    """Noteastic: a ``.ntcbak`` backup (a ZIP holding ``noteastic.db``, at the top or one folder
+    down, any case) or a bare SQLite database whose schema names Noteastic's tables."""
+    if names is not None:
+        for name in names:
+            parts = name.replace("\\", "/").split("/")
+            if len(parts) <= 2 and parts[-1].lower() == "noteastic.db" and parts[0] != "__MACOSX":
+                return True
+        return False
+    if not data.startswith(b"SQLite format 3\x00"):
+        return False
+    from .sqliteutil import schema_area  # small and stdlib only; imported here like the readers
+
+    # The schema starts on page 1 but moves to pages anywhere in the file once it outgrows it.
+    schema = schema_area(data)
+    return b"StrokeElement" in schema and (b"PageContent" in schema or b"BookContent" in schema)
+
+
 _XML_ROOT_RE = re.compile(rb"^(?:<\?xml[^>]{0,200}\?>)?\s*(?:<!--.{0,2000}?-->\s*)*<(?:xournal|MrWriter)[\s>/]", re.S)
 
 
@@ -269,6 +287,13 @@ FORMATS: Dict[str, NoteFormat] = {
             id="remarkable", name="reMarkable", extension=".rmdoc",
             input_extensions=(".rmdoc", ".rm"), sniff=_sniff_remarkable,
             reader="gnnote.remarkable.reader:read_remarkable",
+        ),
+        # Read only and experimental: the full-library backup (.ntcbak), whose layout is known
+        # from one MIT project but not yet from a backup made by the app; see docs/noteastic.md.
+        NoteFormat(
+            id="noteastic", name="Noteastic", extension=".ntcbak",
+            input_extensions=(".ntcbak",), sniff=_sniff_noteastic,
+            reader="gnnote.noteastic.reader:read_ntcbak",
         ),
         # Read only: a section (.one, desktop or OneDrive packaging) or a notebook folder
         # downloaded from OneDrive as a .zip; see docs/onenote.md.
